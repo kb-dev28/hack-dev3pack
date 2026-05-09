@@ -1,8 +1,11 @@
 import { HermesClient } from "@pythnetwork/hermes-client";
 import {
   PYTH_FEED_BTC_USD,
+  PYTH_FEED_ETH_USD,
+  PYTH_FEED_EUR_USD,
   PYTH_FEED_JITOSOL_USD,
   PYTH_FEED_SOL_USD,
+  PYTH_FEED_USD_MXN,
   PYTH_FEED_XLM_USD,
   PYTH_HERMES_ENDPOINT,
 } from "./constants";
@@ -18,6 +21,14 @@ export type JitosolSolQuote = {
   btcUsd: number;
   /** USD per 1 XLM. */
   xlmUsd: number;
+  /** USD per 1 ETH. */
+  ethUsd: number;
+  /** USD per 1 EUR (FX.EUR/USD). */
+  eurUsd: number;
+  /**
+   * MXN per 1 USD (FX.USD/MXN). Convert MXN→USD as: `usd = mxn / usdMxn`.
+   */
+  usdMxn: number;
   /** Oldest publish_time among the feeds used (seconds). */
   publishTimeEarliestSec: number;
 };
@@ -38,6 +49,9 @@ export async function fetchJitosolSolQuote(): Promise<JitosolSolQuote> {
     normalizeFeedId(PYTH_FEED_JITOSOL_USD),
     normalizeFeedId(PYTH_FEED_BTC_USD),
     normalizeFeedId(PYTH_FEED_XLM_USD),
+    normalizeFeedId(PYTH_FEED_ETH_USD),
+    normalizeFeedId(PYTH_FEED_EUR_USD),
+    normalizeFeedId(PYTH_FEED_USD_MXN),
   ];
   const res = await client.getLatestPriceUpdates(ids, { parsed: true });
 
@@ -46,19 +60,28 @@ export async function fetchJitosolSolQuote(): Promise<JitosolSolQuote> {
     throw new Error("Hermes returned no parsed prices.");
   }
 
-  const wantSol = normalizeFeedId(PYTH_FEED_SOL_USD);
-  const wantJit = normalizeFeedId(PYTH_FEED_JITOSOL_USD);
-  const wantBtc = normalizeFeedId(PYTH_FEED_BTC_USD);
-  const wantXlm = normalizeFeedId(PYTH_FEED_XLM_USD);
+  const pick = (want: string) =>
+    parsed.find((p) => normalizeFeedId(p.id) === normalizeFeedId(want));
 
-  const rowSol = parsed.find((p) => normalizeFeedId(p.id) === wantSol);
-  const rowJit = parsed.find((p) => normalizeFeedId(p.id) === wantJit);
-  const rowBtc = parsed.find((p) => normalizeFeedId(p.id) === wantBtc);
-  const rowXlm = parsed.find((p) => normalizeFeedId(p.id) === wantXlm);
+  const rowSol = pick(PYTH_FEED_SOL_USD);
+  const rowJit = pick(PYTH_FEED_JITOSOL_USD);
+  const rowBtc = pick(PYTH_FEED_BTC_USD);
+  const rowXlm = pick(PYTH_FEED_XLM_USD);
+  const rowEth = pick(PYTH_FEED_ETH_USD);
+  const rowEur = pick(PYTH_FEED_EUR_USD);
+  const rowMxn = pick(PYTH_FEED_USD_MXN);
 
-  if (!rowSol?.price || !rowJit?.price || !rowBtc?.price || !rowXlm?.price) {
+  if (
+    !rowSol?.price ||
+    !rowJit?.price ||
+    !rowBtc?.price ||
+    !rowXlm?.price ||
+    !rowEth?.price ||
+    !rowEur?.price ||
+    !rowMxn?.price
+  ) {
     throw new Error(
-      "Missing SOL/USD, JITOSOL/USD, BTC/USD or XLM/USD in Hermes response."
+      "Missing one of SOL/JITOSOL/BTC/XLM/ETH/EUR-USD or USD/MXN from Hermes.",
     );
   }
 
@@ -66,8 +89,19 @@ export async function fetchJitosolSolQuote(): Promise<JitosolSolQuote> {
   const jitosolUsd = rawPriceToNumber(rowJit.price.price, rowJit.price.expo);
   const btcUsd = rawPriceToNumber(rowBtc.price.price, rowBtc.price.expo);
   const xlmUsd = rawPriceToNumber(rowXlm.price.price, rowXlm.price.expo);
+  const ethUsd = rawPriceToNumber(rowEth.price.price, rowEth.price.expo);
+  const eurUsd = rawPriceToNumber(rowEur.price.price, rowEur.price.expo);
+  const usdMxn = rawPriceToNumber(rowMxn.price.price, rowMxn.price.expo);
 
-  if (solUsd <= 0 || jitosolUsd <= 0 || btcUsd <= 0 || xlmUsd <= 0) {
+  if (
+    solUsd <= 0 ||
+    jitosolUsd <= 0 ||
+    btcUsd <= 0 ||
+    xlmUsd <= 0 ||
+    ethUsd <= 0 ||
+    eurUsd <= 0 ||
+    usdMxn <= 0
+  ) {
     throw new Error("Non-positive Pyth price.");
   }
 
@@ -76,7 +110,10 @@ export async function fetchJitosolSolQuote(): Promise<JitosolSolQuote> {
     rowSol.price.publish_time,
     rowJit.price.publish_time,
     rowBtc.price.publish_time,
-    rowXlm.price.publish_time
+    rowXlm.price.publish_time,
+    rowEth.price.publish_time,
+    rowEur.price.publish_time,
+    rowMxn.price.publish_time,
   );
 
   return {
@@ -85,6 +122,9 @@ export async function fetchJitosolSolQuote(): Promise<JitosolSolQuote> {
     jitosolPerSol,
     btcUsd,
     xlmUsd,
+    ethUsd,
+    eurUsd,
+    usdMxn,
     publishTimeEarliestSec,
   };
 }

@@ -45,6 +45,24 @@ function formatUsd(n: number): string {
   });
 }
 
+function formatEur(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  return n.toLocaleString("de-DE", {
+    style: "currency",
+    currency: "EUR",
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatMxn(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  return n.toLocaleString("es-MX", {
+    style: "currency",
+    currency: "MXN",
+    maximumFractionDigits: 2,
+  });
+}
+
 function formatJitosolLike(n: number): string {
   if (!Number.isFinite(n)) return "—";
   return n.toLocaleString(undefined, { maximumFractionDigits: 6 });
@@ -69,7 +87,9 @@ function formatExecutedSol(lp: Lamports): string {
   }).format(n);
 }
 
-function sendRefGlyph(c: "usd" | "sol" | "btc" | "xlm"): string {
+type SendRefCurrency = "usd" | "sol" | "btc" | "eth" | "xlm" | "eur" | "mxn";
+
+function sendRefGlyph(c: SendRefCurrency): string {
   switch (c) {
     case "usd":
       return "$";
@@ -77,8 +97,14 @@ function sendRefGlyph(c: "usd" | "sol" | "btc" | "xlm"): string {
       return "◎";
     case "btc":
       return "₿";
+    case "eth":
+      return "Ξ";
     case "xlm":
       return "✶";
+    case "eur":
+      return "€";
+    case "mxn":
+      return "MXN";
     default:
       return "";
   }
@@ -87,8 +113,16 @@ function sendRefGlyph(c: "usd" | "sol" | "btc" | "xlm"): string {
 function buildSendCta(
   lamports: Lamports,
   inputAmount: number,
-  sendRefCurrency: "usd" | "sol" | "btc" | "xlm",
-  pyth: { solUsd: number; btcUsd: number; xlmUsd: number } | undefined | null
+  sendRefCurrency: SendRefCurrency,
+  pyth:
+    | {
+        solUsd: number;
+        btcUsd: number;
+        ethUsd: number;
+        xlmUsd: number;
+      }
+    | undefined
+    | null
 ): string {
   const solStr = formatExecutedSol(lamports);
   switch (sendRefCurrency) {
@@ -100,8 +134,14 @@ function buildSendCta(
         : `Send ${solStr} SOL`;
     case "btc":
       return `Send ${solStr} SOL (${inputAmount} BTC)`;
+    case "eth":
+      return `Send ${solStr} SOL (${inputAmount} ETH)`;
     case "xlm":
       return `Send ${solStr} SOL (${inputAmount} XLM)`;
+    case "eur":
+      return `Send ${solStr} SOL (${formatEur(inputAmount)})`;
+    case "mxn":
+      return `Send ${solStr} SOL (${formatMxn(inputAmount)})`;
     default:
       return `Send ${solStr} SOL`;
   }
@@ -172,9 +212,8 @@ export function VaultCard() {
   const [partialAmount, setPartialAmount] = useState("");
   const [sendRecipient, setSendRecipient] = useState("");
   const [sendAmount, setSendAmount] = useState("");
-  const [sendRefCurrency, setSendRefCurrency] = useState<
-    "usd" | "sol" | "btc" | "xlm"
-  >("usd");
+  const [sendRefCurrency, setSendRefCurrency] =
+    useState<SendRefCurrency>("usd");
   const [vaultAddress, setVaultAddress] = useState<Address | null>(null);
 
   const walletAddress = wallet?.account.address;
@@ -288,8 +327,14 @@ export function VaultCard() {
       sol = usdToSol(n, p.solUsd);
     } else if (sendRefCurrency === "btc") {
       sol = usdToSol(n * p.btcUsd, p.solUsd);
+    } else if (sendRefCurrency === "eth") {
+      sol = usdToSol(n * p.ethUsd, p.solUsd);
     } else if (sendRefCurrency === "xlm") {
       sol = usdToSol(n * p.xlmUsd, p.solUsd);
+    } else if (sendRefCurrency === "eur") {
+      sol = usdToSol(n * p.eurUsd, p.solUsd);
+    } else if (sendRefCurrency === "mxn") {
+      sol = usdToSol(n / p.usdMxn, p.solUsd);
     }
 
     if (!Number.isFinite(sol) || sol <= 0) {
@@ -336,7 +381,15 @@ export function VaultCard() {
         ? "0.0001"
         : sendRefCurrency === "btc"
           ? "0.0000001"
-          : "1";
+          : sendRefCurrency === "eth"
+            ? "0.000001"
+            : sendRefCurrency === "eur"
+              ? "0.01"
+              : sendRefCurrency === "mxn"
+                ? "1"
+                : sendRefCurrency === "xlm"
+                  ? "1"
+                  : "1";
 
   const sendAmountPlaceholder =
     sendRefCurrency === "usd"
@@ -345,7 +398,15 @@ export function VaultCard() {
         ? "0.25"
         : sendRefCurrency === "btc"
           ? "0.00042"
-          : "250";
+          : sendRefCurrency === "eth"
+            ? "0.02"
+            : sendRefCurrency === "eur"
+              ? "25"
+              : sendRefCurrency === "mxn"
+                ? "350"
+                : sendRefCurrency === "xlm"
+                  ? "250"
+                  : "20";
 
   const handleDeposit = useCallback(async () => {
     if (!walletAddress || !vaultAddress || !amount || !signer) return;
@@ -859,18 +920,19 @@ export function VaultCard() {
                     value={sendRefCurrency}
                     aria-label="Reference currency"
                     onChange={(e) => {
-                      setSendRefCurrency(
-                        e.target.value as typeof sendRefCurrency
-                      );
+                      setSendRefCurrency(e.target.value as SendRefCurrency);
                       setSendAmount("");
                     }}
                     disabled={isSending}
-                    className="h-10 min-w-[9.5rem] cursor-pointer appearance-none rounded-xl border border-white/15 bg-black/35 py-2 pl-3 pr-9 text-sm font-medium text-zinc-100 outline-none transition hover:bg-black/45 focus-visible:ring-1 focus-visible:ring-violet-500/40 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="h-10 min-w-[13.5rem] max-w-[min(100vw-2rem,20rem)] cursor-pointer appearance-none rounded-xl border border-white/15 bg-black/35 py-2 pl-3 pr-9 text-sm font-medium text-zinc-100 outline-none transition hover:bg-black/45 focus-visible:ring-1 focus-visible:ring-violet-500/40 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    <option value="usd">USD</option>
-                    <option value="sol">SOL</option>
-                    <option value="btc">BTC</option>
-                    <option value="xlm">Stellar · XLM</option>
+                    <option value="usd">US Dollar (USD)</option>
+                    <option value="eur">Euro (EUR)</option>
+                    <option value="mxn">Mexican peso (MXN)</option>
+                    <option value="sol">Solana (SOL)</option>
+                    <option value="btc">Bitcoin (BTC)</option>
+                    <option value="eth">Ethereum (ETH)</option>
+                    <option value="xlm">Stellar (XLM)</option>
                   </select>
                   <ChevronDown
                     className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500"
@@ -890,7 +952,8 @@ export function VaultCard() {
                   </>
                 ) : smartSend.kind === "no_pyth" ? (
                   <span className="text-amber-300/95">
-                    Load Pyth prices for USD/BTC/XLM—or pick SOL above.
+                    Load Pyth Hermes—or pick SOL as the reference (works
+                    offline).
                   </span>
                 ) : smartSend.kind === "dust" ? (
                   <span className="text-amber-300/95">
@@ -921,6 +984,50 @@ export function VaultCard() {
                       className="rounded-full border border-white/10 bg-black/35 px-3 py-1 text-xs font-semibold tabular-nums text-zinc-300 transition hover:border-[#14F195]/35 hover:bg-[#14F195]/10 hover:text-[#14F195] disabled:opacity-50"
                     >
                       ${usd}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {sendRefCurrency === "eur" && (
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <span className="text-[0.65rem] uppercase tracking-wider text-zinc-600">
+                    Quick
+                  </span>
+                  {[10, 25, 50].map((e) => (
+                    <button
+                      key={e}
+                      type="button"
+                      disabled={isSending}
+                      onClick={() => {
+                        setSendRefCurrency("eur");
+                        setSendAmount(String(e));
+                      }}
+                      className="rounded-full border border-white/10 bg-black/35 px-3 py-1 text-xs font-semibold tabular-nums text-zinc-300 transition hover:border-emerald-400/35 hover:bg-emerald-500/10 hover:text-emerald-300 disabled:opacity-50"
+                    >
+                      {formatEur(e)}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {sendRefCurrency === "mxn" && (
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <span className="text-[0.65rem] uppercase tracking-wider text-zinc-600">
+                    Quick
+                  </span>
+                  {[100, 200, 500, 1000].map((pesos) => (
+                    <button
+                      key={pesos}
+                      type="button"
+                      disabled={isSending}
+                      onClick={() => {
+                        setSendRefCurrency("mxn");
+                        setSendAmount(String(pesos));
+                      }}
+                      className="rounded-full border border-white/10 bg-black/35 px-3 py-1 text-xs font-semibold tabular-nums text-zinc-300 transition hover:border-teal-400/35 hover:bg-teal-500/10 hover:text-teal-200 disabled:opacity-50"
+                    >
+                      {pesos}&nbsp;MXN
                     </button>
                   ))}
                 </div>
@@ -958,15 +1065,13 @@ export function VaultCard() {
                     </p>
                   )}
                 {smartSend.kind === "ok" && smartSend.lamports != null && (
-                  <p className="font-mono text-[0.7rem] text-zinc-600">
-                    Chain debit:{" "}
+                  <p className="font-mono text-[0.7rem] leading-snug text-zinc-600">
+                    Chain debit{" "}
                     <span className="text-zinc-400">
                       {String(smartSend.lamports)}
                     </span>{" "}
-                    lamports · Pyth SOL ≈{" "}
-                    {pythQuote.data ? formatUsd(pythQuote.data.solUsd) : "—"} ·
-                    BTC ≈{" "}
-                    {pythQuote.data ? formatUsd(pythQuote.data.btcUsd) : "—"}
+                    lamports · Pyth: SOL/EUR/BTC/ETH/XLM · USD/MXN (MXN por 1
+                    USD)
                   </p>
                 )}
               </div>

@@ -18,3 +18,17 @@ export const PYTH_FEED_BTC_USD =
 /** XLM/USD · Hermes Crypto.XLM/USD */
 export const PYTH_FEED_XLM_USD =
   "b7a8eba68a997cd0210c2e1e4ee811ad2d174b3611c22d9ebf16f4cb7e9ba850";
+
+/** ETH/USD · Hermes Crypto.ETH/USD */
+export const PYTH_FEED_ETH_USD =
+  "ff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace";
+
+/** EUR/USD · Hermes FX.EUR/USD (USD per 1 EUR) */
+export const PYTH_FEED_EUR_USD =
+  "a995d00bb36a63cef7fd2c287dc105fc8f3d93779f062f09551b0af3e81ec30b";
+
+/**
+ * USD/MXN · Hermes FX.USD/MXN — **MXN per 1 USD** (divide MXN amounts by this for USD).
+ */
+export const PYTH_FEED_USD_MXN =
+  "e13b1c1ffb32f34e1be9545583f01ef385fde7f42ee66049d30570dc866b77ca";
