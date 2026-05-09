@@ -3,20 +3,26 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
 import { animate, motion } from "framer-motion";
-import { Zap } from "lucide-react";
+import { ChevronDown, Zap } from "lucide-react";
 import { useWallet } from "../lib/wallet/context";
 import { useSendTransaction } from "../lib/hooks/use-send-transaction";
 import { useBalance } from "../lib/hooks/use-balance";
 import { usePythJitosolQuote } from "../lib/hooks/use-pyth-jitosol-quote";
 import { useSimulatedJitoYield } from "../lib/hooks/use-simulated-jito-yield";
 import { useLifetimeSolEarned } from "../lib/hooks/use-lifetime-sol-earned";
-import { lamportsFromSol, lamportsToSolString } from "../lib/lamports";
-import { address, type Address } from "@solana/kit";
+import {
+  lamportsFromSol,
+  lamportsFromSolFloor,
+  lamportsToSolString,
+} from "../lib/lamports";
+import { usdToSol } from "../lib/pyth/value-send";
+import { address, type Address, type Lamports } from "@solana/kit";
 import { toast } from "sonner";
 import {
   getDepositInstruction,
@@ -55,7 +61,57 @@ function formatDurationSec(sec: number): string {
   return `${h}h ${m2}m`;
 }
 
-function splitFixed8(n: number): { intPart: string; fracA: string; fracB: string } {
+function formatExecutedSol(lp: Lamports): string {
+  const n = Number(lp) / 1_000_000_000;
+  return new Intl.NumberFormat(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 8,
+  }).format(n);
+}
+
+function sendRefGlyph(c: "usd" | "sol" | "btc" | "xlm"): string {
+  switch (c) {
+    case "usd":
+      return "$";
+    case "sol":
+      return "◎";
+    case "btc":
+      return "₿";
+    case "xlm":
+      return "✶";
+    default:
+      return "";
+  }
+}
+
+function buildSendCta(
+  lamports: Lamports,
+  inputAmount: number,
+  sendRefCurrency: "usd" | "sol" | "btc" | "xlm",
+  pyth: { solUsd: number; btcUsd: number; xlmUsd: number } | undefined | null
+): string {
+  const solStr = formatExecutedSol(lamports);
+  switch (sendRefCurrency) {
+    case "usd":
+      return `Send ${solStr} SOL (${formatUsd(inputAmount)})`;
+    case "sol":
+      return pyth
+        ? `Send ${solStr} SOL (${formatUsd(inputAmount * pyth.solUsd)})`
+        : `Send ${solStr} SOL`;
+    case "btc":
+      return `Send ${solStr} SOL (${inputAmount} BTC)`;
+    case "xlm":
+      return `Send ${solStr} SOL (${inputAmount} XLM)`;
+    default:
+      return `Send ${solStr} SOL`;
+  }
+}
+
+function splitFixed8(n: number): {
+  intPart: string;
+  fracA: string;
+  fracB: string;
+} {
   if (!Number.isFinite(n) || n < 0) {
     return { intPart: "0", fracA: "0000", fracB: "0000" };
   }
@@ -98,7 +154,9 @@ function useAnimatedSol(target: number, active: boolean): number {
 function PremiumShell({ children }: { children: ReactNode }) {
   return (
     <div className="w-full rounded-3xl bg-gradient-to-br from-[#14F195]/75 via-emerald-500/35 to-violet-600/80 p-px shadow-[0_24px_80px_-32px_rgba(20,241,149,0.35)]">
-      <div className="rounded-3xl bg-neutral-950/55 backdrop-blur-md">{children}</div>
+      <div className="rounded-3xl bg-neutral-950/55 backdrop-blur-md">
+        {children}
+      </div>
     </div>
   );
 }
@@ -114,6 +172,9 @@ export function VaultCard() {
   const [partialAmount, setPartialAmount] = useState("");
   const [sendRecipient, setSendRecipient] = useState("");
   const [sendAmount, setSendAmount] = useState("");
+  const [sendRefCurrency, setSendRefCurrency] = useState<
+    "usd" | "sol" | "btc" | "xlm"
+  >("usd");
   const [vaultAddress, setVaultAddress] = useState<Address | null>(null);
 
   const walletAddress = wallet?.account.address;
@@ -167,11 +228,7 @@ export function VaultCard() {
   });
 
   const dynamicSolTarget =
-    simulated != null
-      ? simulated.dynamicSol
-      : hasVaultFunds
-        ? solInVault
-        : 0;
+    simulated != null ? simulated.dynamicSol : hasVaultFunds ? solInVault : 0;
 
   const animatedSol = useAnimatedSol(dynamicSolTarget, Boolean(simulated));
 
@@ -180,13 +237,115 @@ export function VaultCard() {
   const lifetimeEarnedSol = useLifetimeSolEarned(
     walletKey,
     sessionYieldSol,
-    hasVaultFunds,
+    hasVaultFunds
   );
 
   const heroJito =
     simulated != null ? simulated.totalJito : (jitosolEquiv ?? null);
 
   const parts = splitFixed8(animatedSol);
+
+  const smartSend = useMemo(() => {
+    const raw = sendAmount.trim();
+    if (!raw) {
+      return {
+        kind: "empty" as const,
+        lamports: null as Lamports | null,
+        inputAmount: null as number | null,
+      };
+    }
+    const n = parseFloat(raw);
+    if (!Number.isFinite(n) || n <= 0) {
+      return {
+        kind: "invalid" as const,
+        lamports: null,
+        inputAmount: null,
+      };
+    }
+
+    const p = pythQuote.data;
+
+    if (sendRefCurrency === "sol") {
+      const lp = lamportsFromSol(n);
+      return {
+        kind: "ok" as const,
+        lamports: lp,
+        inputAmount: n,
+        sendRefCurrency,
+      };
+    }
+
+    if (!p) {
+      return {
+        kind: "no_pyth" as const,
+        lamports: null,
+        inputAmount: n,
+      };
+    }
+
+    let sol = NaN;
+    if (sendRefCurrency === "usd") {
+      sol = usdToSol(n, p.solUsd);
+    } else if (sendRefCurrency === "btc") {
+      sol = usdToSol(n * p.btcUsd, p.solUsd);
+    } else if (sendRefCurrency === "xlm") {
+      sol = usdToSol(n * p.xlmUsd, p.solUsd);
+    }
+
+    if (!Number.isFinite(sol) || sol <= 0) {
+      return {
+        kind: "invalid" as const,
+        lamports: null,
+        inputAmount: n,
+      };
+    }
+
+    const lp = lamportsFromSolFloor(sol);
+    if (lp <= 0n) {
+      return {
+        kind: "dust" as const,
+        lamports: lp,
+        inputAmount: n,
+        sendRefCurrency: sendRefCurrency,
+      };
+    }
+    return {
+      kind: "ok" as const,
+      lamports: lp,
+      inputAmount: n,
+      sendRefCurrency,
+    };
+  }, [sendAmount, sendRefCurrency, pythQuote.data]);
+
+  const sendCtaLabel =
+    smartSend.kind === "ok" &&
+    smartSend.lamports &&
+    smartSend.inputAmount != null
+      ? buildSendCta(
+          smartSend.lamports,
+          smartSend.inputAmount,
+          smartSend.sendRefCurrency,
+          pythQuote.data
+        )
+      : null;
+
+  const sendAmountStep =
+    sendRefCurrency === "usd"
+      ? "0.01"
+      : sendRefCurrency === "sol"
+        ? "0.0001"
+        : sendRefCurrency === "btc"
+          ? "0.0000001"
+          : "1";
+
+  const sendAmountPlaceholder =
+    sendRefCurrency === "usd"
+      ? "20.00"
+      : sendRefCurrency === "sol"
+        ? "0.25"
+        : sendRefCurrency === "btc"
+          ? "0.00042"
+          : "250";
 
   const handleDeposit = useCallback(async () => {
     if (!walletAddress || !vaultAddress || !amount || !signer) return;
@@ -306,10 +465,34 @@ export function VaultCard() {
   ]);
 
   const handleSendTo = useCallback(async () => {
-    if (!walletAddress || !vaultAddress || !signer || !sendAmount) return;
-    const sol = parseFloat(sendAmount);
-    if (!Number.isFinite(sol) || sol <= 0) {
-      toast.error("Enter a valid send amount in SOL.");
+    if (!walletAddress || !vaultAddress || !signer || !sendAmount.trim())
+      return;
+
+    if (smartSend.kind === "no_pyth") {
+      toast.error("Wait for Pyth quotes or choose SOL as the reference.");
+      return;
+    }
+    if (smartSend.kind === "empty" || smartSend.kind === "invalid") {
+      toast.error("Enter a valid amount.");
+      return;
+    }
+    if (smartSend.kind === "dust") {
+      toast.error("Amount rounds to zero lamports after conversion.");
+      return;
+    }
+    if (
+      smartSend.kind !== "ok" ||
+      !smartSend.lamports ||
+      smartSend.lamports <= 0n
+    ) {
+      toast.error("Invalid send amount.");
+      return;
+    }
+
+    if (vaultLamports != null && smartSend.lamports > vaultLamports) {
+      toast.error("Insufficient vault balance.", {
+        description: `Vault holds ~${lamportsToSolString(vaultLamports, 6)} SOL.`,
+      });
       return;
     }
 
@@ -326,7 +509,7 @@ export function VaultCard() {
         signer,
         vault: vaultAddress,
         recipient: recipientAddr,
-        amount: lamportsFromSol(sol),
+        amount: smartSend.lamports,
       });
       const signature = await send({ instructions: [instruction] });
       toast.success("Sent from vault!", {
@@ -354,6 +537,8 @@ export function VaultCard() {
     sendAmount,
     send,
     getExplorerUrl,
+    smartSend,
+    vaultLamports,
   ]);
 
   if (status !== "connected") {
@@ -385,8 +570,9 @@ export function VaultCard() {
               Your YieldLink Balance
             </h2>
             <p className="max-w-prose text-sm leading-relaxed text-zinc-400">
-              On-chain balance is SOL lamports. “Dynamic SOL” adds a UI-only demo
-              yield (Pyth ratios + time). Not liquid stake or transferable JitoSOL.
+              On-chain balance is SOL lamports. “Dynamic SOL” adds a UI-only
+              demo yield (Pyth ratios + time). Not liquid stake or transferable
+              JitoSOL.
             </p>
           </div>
           <span
@@ -460,10 +646,7 @@ export function VaultCard() {
                 <>
                   {" "}
                   + yield{" "}
-                  <span
-                    className="font-mono"
-                    style={{ color: SOLANA_ACCENT }}
-                  >
+                  <span className="font-mono" style={{ color: SOLANA_ACCENT }}>
                     +{simulated.yieldSol.toFixed(8)}
                   </span>{" "}
                   SOL (simulated)
@@ -485,8 +668,7 @@ export function VaultCard() {
                 className="font-mono text-2xl font-semibold tabular-nums"
                 style={{ color: SOLANA_ACCENT }}
               >
-                +
-                {(simulated?.yieldSol ?? 0).toFixed(8)}{" "}
+                +{(simulated?.yieldSol ?? 0).toFixed(8)}{" "}
                 <span className="text-base font-medium text-zinc-400">SOL</span>
               </p>
               <p className="mt-2 text-xs text-zinc-500">
@@ -516,13 +698,12 @@ export function VaultCard() {
                 animate={{ scale: 1 }}
                 transition={{ type: "spring", stiffness: 400, damping: 28 }}
               >
-                +
-                {lifetimeEarnedSol.toFixed(8)}{" "}
+                +{lifetimeEarnedSol.toFixed(8)}{" "}
                 <span className="text-base font-medium text-zinc-400">SOL</span>
               </motion.p>
               <p className="mt-2 text-xs text-zinc-500">
-                Lifetime (this browser). Never decreases; grows when session yield
-                rises.
+                Lifetime (this browser). Never decreases; grows when session
+                yield rises.
               </p>
             </motion.div>
           </div>
@@ -557,13 +738,14 @@ export function VaultCard() {
               <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 Pyth ~2s ·{" "}
                 <span className="font-mono text-zinc-400">
-                  {formatJitosolLike(pythQuote.data.jitosolPerSol)} JitoSOL / SOL
+                  {formatJitosolLike(pythQuote.data.jitosolPerSol)} JitoSOL /
+                  SOL
                 </span>
                 {pythQuote.data.publishTimeEarliestSec > 0 && (
                   <span className="opacity-80">
                     · t≈{" "}
                     {new Date(
-                      pythQuote.data.publishTimeEarliestSec * 1000,
+                      pythQuote.data.publishTimeEarliestSec * 1000
                     ).toLocaleTimeString()}
                   </span>
                 )}
@@ -629,42 +811,165 @@ export function VaultCard() {
             </div>
           </div>
 
-          <div className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+          <div className="space-y-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
             <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-zinc-500">
-              Send from vault
+              Smart send
             </p>
+            <p className="text-xs text-zinc-500">
+              One signature from the vault. Cross-asset entries use Pyth
+              (mainnet Hermes); lamports are floored after conversion.
+            </p>
+
             <input
               type="text"
               placeholder="Recipient Solana address"
               value={sendRecipient}
               onChange={(e) => setSendRecipient(e.target.value)}
               disabled={isSending}
-              className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 font-mono text-xs text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-white/25 disabled:pointer-events-none disabled:opacity-50"
+              className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 font-mono text-xs text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-white/25 focus:ring-1 focus:ring-violet-500/25 disabled:pointer-events-none disabled:opacity-50"
             />
-            <div className="flex flex-wrap gap-3">
-              <input
-                type="number"
-                min="0"
-                step="0.001"
-                placeholder="SOL amount"
-                value={sendAmount}
-                onChange={(e) => setSendAmount(e.target.value)}
-                disabled={isSending}
-                className="min-w-[10rem] flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-white/25 disabled:pointer-events-none disabled:opacity-50"
-              />
+
+            <motion.div
+              layout
+              className="space-y-3 text-[0.95rem] leading-relaxed"
+            >
+              <div className="flex flex-wrap items-end gap-x-2 gap-y-2 text-zinc-400">
+                <span className="shrink-0 text-zinc-500">I want to send</span>
+                <span
+                  className="pb-px text-lg tabular-nums"
+                  style={{ color: SOLANA_ACCENT }}
+                  aria-hidden
+                >
+                  {sendRefGlyph(sendRefCurrency)}
+                </span>
+                <input
+                  type="number"
+                  min="0"
+                  step={sendAmountStep}
+                  inputMode="decimal"
+                  placeholder={sendAmountPlaceholder}
+                  value={sendAmount}
+                  onChange={(e) => setSendAmount(e.target.value)}
+                  disabled={isSending}
+                  className="w-[7.25rem] border-0 border-b border-zinc-600 bg-transparent pb-px text-lg font-semibold tabular-nums text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-[#14F195]/70 disabled:opacity-50 sm:w-36 md:w-44"
+                />
+                <span className="pb-px text-zinc-500">as</span>
+                <label className="relative inline-flex items-center pb-px">
+                  <select
+                    value={sendRefCurrency}
+                    aria-label="Reference currency"
+                    onChange={(e) => {
+                      setSendRefCurrency(
+                        e.target.value as typeof sendRefCurrency
+                      );
+                      setSendAmount("");
+                    }}
+                    disabled={isSending}
+                    className="h-10 min-w-[9.5rem] cursor-pointer appearance-none rounded-xl border border-white/15 bg-black/35 py-2 pl-3 pr-9 text-sm font-medium text-zinc-100 outline-none transition hover:bg-black/45 focus-visible:ring-1 focus-visible:ring-violet-500/40 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <option value="usd">USD</option>
+                    <option value="sol">SOL</option>
+                    <option value="btc">BTC</option>
+                    <option value="xlm">Stellar · XLM</option>
+                  </select>
+                  <ChevronDown
+                    className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500"
+                    aria-hidden
+                  />
+                </label>
+              </div>
+
+              <p className="min-h-[1.375rem] text-sm text-zinc-400">
+                {smartSend.kind === "ok" && smartSend.lamports != null ? (
+                  <>
+                    The recipient will receive exactly{" "}
+                    <span className="font-mono text-base font-medium text-zinc-100">
+                      {formatExecutedSol(smartSend.lamports)}
+                    </span>{" "}
+                    SOL.
+                  </>
+                ) : smartSend.kind === "no_pyth" ? (
+                  <span className="text-amber-300/95">
+                    Load Pyth prices for USD/BTC/XLM—or pick SOL above.
+                  </span>
+                ) : smartSend.kind === "dust" ? (
+                  <span className="text-amber-300/95">
+                    That amount rounds to fewer than 1 lamport—try a larger
+                    value.
+                  </span>
+                ) : sendAmount.trim() !== "" && smartSend.kind === "invalid" ? (
+                  <span className="text-red-400/90">
+                    Enter a positive number.
+                  </span>
+                ) : null}
+              </p>
+
+              {sendRefCurrency === "usd" && (
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <span className="text-[0.65rem] uppercase tracking-wider text-zinc-600">
+                    Quick
+                  </span>
+                  {[5, 10, 20, 50].map((usd) => (
+                    <button
+                      key={usd}
+                      type="button"
+                      disabled={isSending}
+                      onClick={() => {
+                        setSendRefCurrency("usd");
+                        setSendAmount(String(usd));
+                      }}
+                      className="rounded-full border border-white/10 bg-black/35 px-3 py-1 text-xs font-semibold tabular-nums text-zinc-300 transition hover:border-[#14F195]/35 hover:bg-[#14F195]/10 hover:text-[#14F195] disabled:opacity-50"
+                    >
+                      ${usd}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+
+            <div className="flex flex-wrap items-center gap-3 border-t border-white/10 pt-4">
               <button
+                type="button"
                 onClick={handleSendTo}
                 disabled={
                   isSending ||
                   !sendRecipient.trim() ||
-                  !sendAmount ||
-                  parseFloat(sendAmount) <= 0 ||
-                  !vaultLamports
+                  !sendAmount.trim() ||
+                  !vaultLamports ||
+                  smartSend.kind !== "ok" ||
+                  (smartSend.kind === "ok" &&
+                    vaultLamports != null &&
+                    smartSend.lamports != null &&
+                    smartSend.lamports > vaultLamports)
                 }
-                className="rounded-xl bg-gradient-to-r from-violet-500/90 to-indigo-600/90 px-5 py-2.5 text-sm font-semibold text-white shadow-md transition hover:brightness-110 disabled:pointer-events-none disabled:opacity-50"
+                className="min-h-[3rem] shrink-0 rounded-xl bg-gradient-to-r from-violet-500/95 to-indigo-600/95 px-5 py-2.5 text-center text-sm font-semibold tracking-tight text-white shadow-lg shadow-violet-900/40 transition hover:brightness-110 disabled:pointer-events-none disabled:opacity-50"
               >
-                {isSending ? "Confirming…" : "Send"}
+                {isSending ? "Confirming…" : (sendCtaLabel ?? "Send")}
               </button>
+
+              <div className="min-w-0 flex-1 text-xs text-zinc-500">
+                {smartSend.kind === "ok" &&
+                  smartSend.lamports != null &&
+                  vaultLamports != null &&
+                  smartSend.lamports > vaultLamports && (
+                    <p className="text-red-400">
+                      Vault only has ~{lamportsToSolString(vaultLamports, 6)}{" "}
+                      SOL principal.
+                    </p>
+                  )}
+                {smartSend.kind === "ok" && smartSend.lamports != null && (
+                  <p className="font-mono text-[0.7rem] text-zinc-600">
+                    Chain debit:{" "}
+                    <span className="text-zinc-400">
+                      {String(smartSend.lamports)}
+                    </span>{" "}
+                    lamports · Pyth SOL ≈{" "}
+                    {pythQuote.data ? formatUsd(pythQuote.data.solUsd) : "—"} ·
+                    BTC ≈{" "}
+                    {pythQuote.data ? formatUsd(pythQuote.data.btcUsd) : "—"}
+                  </p>
+                )}
+              </div>
             </div>
           </div>
 
