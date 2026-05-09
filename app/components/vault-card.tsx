@@ -87,7 +87,39 @@ function formatExecutedSol(lp: Lamports): string {
   }).format(n);
 }
 
-type SendRefCurrency = "usd" | "sol" | "btc" | "eth" | "xlm" | "eur" | "mxn";
+type SendRefCurrency =
+  | "usd"
+  | "sol"
+  | "btc"
+  | "eth"
+  | "xlm"
+  | "eur"
+  | "mxn"
+  | "usdt";
+
+type SmartSendDenom = "crypto" | "fiat";
+
+const SMART_SEND_CRYPTO = [
+  "sol",
+  "btc",
+  "eth",
+  "xlm",
+  "usdt",
+] as const satisfies readonly SendRefCurrency[];
+
+const SMART_SEND_FIAT = [
+  "usd",
+  "eur",
+  "mxn",
+] as const satisfies readonly SendRefCurrency[];
+
+function isCryptoRef(c: SendRefCurrency): boolean {
+  return (SMART_SEND_CRYPTO as readonly string[]).includes(c);
+}
+
+function isFiatRef(c: SendRefCurrency): boolean {
+  return (SMART_SEND_FIAT as readonly string[]).includes(c);
+}
 
 function sendRefGlyph(c: SendRefCurrency): string {
   switch (c) {
@@ -105,6 +137,8 @@ function sendRefGlyph(c: SendRefCurrency): string {
       return "€";
     case "mxn":
       return "MXN";
+    case "usdt":
+      return "₮";
     default:
       return "";
   }
@@ -120,6 +154,7 @@ function buildSendCta(
         btcUsd: number;
         ethUsd: number;
         xlmUsd: number;
+        usdtUsd: number;
       }
     | undefined
     | null
@@ -142,6 +177,8 @@ function buildSendCta(
       return `Send ${solStr} SOL (${formatEur(inputAmount)})`;
     case "mxn":
       return `Send ${solStr} SOL (${formatMxn(inputAmount)})`;
+    case "usdt":
+      return `Send ${solStr} SOL (${inputAmount} USDT)`;
     default:
       return `Send ${solStr} SOL`;
   }
@@ -212,8 +249,10 @@ export function VaultCard() {
   const [partialAmount, setPartialAmount] = useState("");
   const [sendRecipient, setSendRecipient] = useState("");
   const [sendAmount, setSendAmount] = useState("");
+  const [smartSendDenom, setSmartSendDenom] =
+    useState<SmartSendDenom>("crypto");
   const [sendRefCurrency, setSendRefCurrency] =
-    useState<SendRefCurrency>("usd");
+    useState<SendRefCurrency>("sol");
   const [vaultAddress, setVaultAddress] = useState<Address | null>(null);
 
   const walletAddress = wallet?.account.address;
@@ -335,6 +374,8 @@ export function VaultCard() {
       sol = usdToSol(n * p.eurUsd, p.solUsd);
     } else if (sendRefCurrency === "mxn") {
       sol = usdToSol(n / p.usdMxn, p.solUsd);
+    } else if (sendRefCurrency === "usdt") {
+      sol = usdToSol(n * p.usdtUsd, p.solUsd);
     }
 
     if (!Number.isFinite(sol) || sol <= 0) {
@@ -374,6 +415,27 @@ export function VaultCard() {
         )
       : null;
 
+  const smartSendDenomOptions =
+    smartSendDenom === "crypto"
+      ? ([
+          ["sol", "Solana (SOL)"],
+          ["btc", "Bitcoin (BTC)"],
+          ["eth", "Ethereum (ETH)"],
+          ["xlm", "Stellar (XLM)"],
+          ["usdt", "Tether (USDT)"],
+        ] as const)
+      : ([
+          ["usd", "US Dollar (USD)"],
+          ["eur", "Euro (EUR)"],
+          ["mxn", "Mexican peso (MXN)"],
+        ] as const);
+
+  const smartSendCryptoBtnClass =
+    "min-h-[3rem] shrink-0 rounded-xl bg-gradient-to-r from-[#14F195] via-emerald-500 to-teal-600 px-5 py-2.5 text-center text-sm font-semibold tracking-tight text-neutral-950 shadow-lg shadow-emerald-900/35 outline-none ring-1 ring-white/15 transition hover:brightness-[1.05] disabled:pointer-events-none disabled:opacity-45";
+
+  const smartSendFiatBtnClass =
+    "min-h-[3rem] shrink-0 rounded-xl bg-gradient-to-r from-sky-500 via-blue-700 to-[#173a94] px-5 py-2.5 text-center text-sm font-semibold tracking-tight text-white shadow-lg shadow-blue-950/45 outline-none ring-1 ring-white/20 transition hover:brightness-[1.06] disabled:pointer-events-none disabled:opacity-45";
+
   const sendAmountStep =
     sendRefCurrency === "usd"
       ? "0.01"
@@ -389,7 +451,9 @@ export function VaultCard() {
                 ? "1"
                 : sendRefCurrency === "xlm"
                   ? "1"
-                  : "1";
+                  : sendRefCurrency === "usdt"
+                    ? "0.01"
+                    : "1";
 
   const sendAmountPlaceholder =
     sendRefCurrency === "usd"
@@ -406,7 +470,9 @@ export function VaultCard() {
                 ? "350"
                 : sendRefCurrency === "xlm"
                   ? "250"
-                  : "20";
+                  : sendRefCurrency === "usdt"
+                    ? "100"
+                    : "20";
 
   const handleDeposit = useCallback(async () => {
     if (!walletAddress || !vaultAddress || !amount || !signer) return;
@@ -894,6 +960,45 @@ export function VaultCard() {
               layout
               className="space-y-3 text-[0.95rem] leading-relaxed"
             >
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  disabled={isSending}
+                  onClick={() => {
+                    setSmartSendDenom("crypto");
+                    setSendRefCurrency((prev) =>
+                      isCryptoRef(prev) ? prev : "sol"
+                    );
+                    setSendAmount("");
+                  }}
+                  className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide transition ${
+                    smartSendDenom === "crypto"
+                      ? "bg-[#14F195]/20 text-[#14F195] ring-1 ring-[#14F195]/35"
+                      : "bg-black/25 text-zinc-500 hover:text-zinc-300"
+                  } disabled:opacity-50`}
+                >
+                  🌐 Crypto
+                </button>
+                <button
+                  type="button"
+                  disabled={isSending}
+                  onClick={() => {
+                    setSmartSendDenom("fiat");
+                    setSendRefCurrency((prev) =>
+                      isFiatRef(prev) ? prev : "usd"
+                    );
+                    setSendAmount("");
+                  }}
+                  className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide transition ${
+                    smartSendDenom === "fiat"
+                      ? "bg-blue-500/25 text-blue-200 ring-1 ring-blue-400/40"
+                      : "bg-black/25 text-zinc-500 hover:text-zinc-300"
+                  } disabled:opacity-50`}
+                >
+                  💵 Fiat
+                </button>
+              </div>
+
               <div className="flex flex-wrap items-end gap-x-2 gap-y-2 text-zinc-400">
                 <span className="shrink-0 text-zinc-500">I want to send</span>
                 <span
@@ -926,13 +1031,11 @@ export function VaultCard() {
                     disabled={isSending}
                     className="h-10 min-w-[13.5rem] max-w-[min(100vw-2rem,20rem)] cursor-pointer appearance-none rounded-xl border border-white/15 bg-black/35 py-2 pl-3 pr-9 text-sm font-medium text-zinc-100 outline-none transition hover:bg-black/45 focus-visible:ring-1 focus-visible:ring-violet-500/40 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    <option value="usd">US Dollar (USD)</option>
-                    <option value="eur">Euro (EUR)</option>
-                    <option value="mxn">Mexican peso (MXN)</option>
-                    <option value="sol">Solana (SOL)</option>
-                    <option value="btc">Bitcoin (BTC)</option>
-                    <option value="eth">Ethereum (ETH)</option>
-                    <option value="xlm">Stellar (XLM)</option>
+                    {smartSendDenomOptions.map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
                   </select>
                   <ChevronDown
                     className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500"
@@ -940,6 +1043,13 @@ export function VaultCard() {
                   />
                 </label>
               </div>
+
+              {(sendRefCurrency === "eur" || sendRefCurrency === "mxn") && (
+                <p className="text-[0.7rem] font-medium leading-snug text-amber-400/95">
+                  Nota: Los mercados FX cierran los fines de semana; el precio
+                  de Pyth será el último cierre.
+                </p>
+              )}
 
               <p className="min-h-[1.375rem] text-sm text-zinc-400">
                 {smartSend.kind === "ok" && smartSend.lamports != null ? (
@@ -972,18 +1082,42 @@ export function VaultCard() {
                   <span className="text-[0.65rem] uppercase tracking-wider text-zinc-600">
                     Quick
                   </span>
-                  {[5, 10, 20, 50].map((usd) => (
+                  {[10, 20, 50].map((usd) => (
                     <button
                       key={usd}
                       type="button"
                       disabled={isSending}
                       onClick={() => {
+                        setSmartSendDenom("fiat");
                         setSendRefCurrency("usd");
                         setSendAmount(String(usd));
                       }}
-                      className="rounded-full border border-white/10 bg-black/35 px-3 py-1 text-xs font-semibold tabular-nums text-zinc-300 transition hover:border-[#14F195]/35 hover:bg-[#14F195]/10 hover:text-[#14F195] disabled:opacity-50"
+                      className="rounded-full border border-white/10 bg-black/35 px-3 py-1 text-xs font-semibold tabular-nums text-zinc-300 transition hover:border-blue-400/35 hover:bg-blue-500/10 hover:text-blue-100 disabled:opacity-50"
                     >
                       ${usd}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {sendRefCurrency === "sol" && (
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <span className="text-[0.65rem] uppercase tracking-wider text-zinc-600">
+                    Quick
+                  </span>
+                  {[0.1, 0.5, 1].map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      disabled={isSending}
+                      onClick={() => {
+                        setSmartSendDenom("crypto");
+                        setSendRefCurrency("sol");
+                        setSendAmount(String(s));
+                      }}
+                      className="rounded-full border border-white/10 bg-black/35 px-3 py-1 text-xs font-semibold tabular-nums text-zinc-300 transition hover:border-[#14F195]/35 hover:bg-[#14F195]/10 hover:text-[#14F195] disabled:opacity-50"
+                    >
+                      {s}&nbsp;SOL
                     </button>
                   ))}
                 </div>
@@ -1000,6 +1134,7 @@ export function VaultCard() {
                       type="button"
                       disabled={isSending}
                       onClick={() => {
+                        setSmartSendDenom("fiat");
                         setSendRefCurrency("eur");
                         setSendAmount(String(e));
                       }}
@@ -1016,12 +1151,13 @@ export function VaultCard() {
                   <span className="text-[0.65rem] uppercase tracking-wider text-zinc-600">
                     Quick
                   </span>
-                  {[100, 200, 500, 1000].map((pesos) => (
+                  {[100, 500, 1000].map((pesos) => (
                     <button
                       key={pesos}
                       type="button"
                       disabled={isSending}
                       onClick={() => {
+                        setSmartSendDenom("fiat");
                         setSendRefCurrency("mxn");
                         setSendAmount(String(pesos));
                       }}
@@ -1049,7 +1185,11 @@ export function VaultCard() {
                     smartSend.lamports != null &&
                     smartSend.lamports > vaultLamports)
                 }
-                className="min-h-[3rem] shrink-0 rounded-xl bg-gradient-to-r from-violet-500/95 to-indigo-600/95 px-5 py-2.5 text-center text-sm font-semibold tracking-tight text-white shadow-lg shadow-violet-900/40 transition hover:brightness-110 disabled:pointer-events-none disabled:opacity-50"
+                className={
+                  smartSendDenom === "crypto"
+                    ? smartSendCryptoBtnClass
+                    : smartSendFiatBtnClass
+                }
               >
                 {isSending ? "Confirming…" : (sendCtaLabel ?? "Send")}
               </button>
@@ -1070,8 +1210,7 @@ export function VaultCard() {
                     <span className="text-zinc-400">
                       {String(smartSend.lamports)}
                     </span>{" "}
-                    lamports · Pyth: SOL/EUR/BTC/ETH/XLM · USD/MXN (MXN por 1
-                    USD)
+                    lamports · Pyth refs incl. BTC, ETH, XLM, USDT, EUR, USD/MXN
                   </p>
                 )}
               </div>

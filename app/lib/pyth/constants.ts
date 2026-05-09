@@ -32,3 +32,10 @@ export const PYTH_FEED_EUR_USD =
  */
 export const PYTH_FEED_USD_MXN =
   "e13b1c1ffb32f34e1be9545583f01ef385fde7f42ee66049d30570dc866b77ca";
+
+/**
+ * USDT/USD (`Crypto.USDT/USD`).
+ * Hex solicitado manualmente puede no coincidir con Hermes: verifica `GET /price_feeds?query=Crypto.USDT/USD`.
+ */
+export const PYTH_FEED_USDT_USD =
+  "2b89b9dc8fdf9f34709a5b106b472f0f39bb6ca9ce04b0fd7f2e971688e2e53b";
