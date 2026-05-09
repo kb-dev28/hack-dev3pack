@@ -1,11 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { animate, motion } from "framer-motion";
+import { Zap } from "lucide-react";
 import { useWallet } from "../lib/wallet/context";
 import { useSendTransaction } from "../lib/hooks/use-send-transaction";
 import { useBalance } from "../lib/hooks/use-balance";
 import { usePythJitosolQuote } from "../lib/hooks/use-pyth-jitosol-quote";
 import { useSimulatedJitoYield } from "../lib/hooks/use-simulated-jito-yield";
+import { useLifetimeSolEarned } from "../lib/hooks/use-lifetime-sol-earned";
 import { lamportsFromSol, lamportsToSolString } from "../lib/lamports";
 import { address, type Address } from "@solana/kit";
 import { toast } from "sonner";
@@ -18,6 +27,8 @@ import {
 } from "../generated/vault";
 import { parseTransactionError } from "../lib/errors";
 import { useCluster } from "./cluster-context";
+
+const SOLANA_ACCENT = "#14F195";
 
 function formatUsd(n: number): string {
   if (!Number.isFinite(n)) return "—";
@@ -44,6 +55,54 @@ function formatDurationSec(sec: number): string {
   return `${h}h ${m2}m`;
 }
 
+function splitFixed8(n: number): { intPart: string; fracA: string; fracB: string } {
+  if (!Number.isFinite(n) || n < 0) {
+    return { intPart: "0", fracA: "0000", fracB: "0000" };
+  }
+  const [i, f = ""] = n.toFixed(8).split(".");
+  const pad = `${f}00000000`.slice(0, 8);
+  return { intPart: i, fracA: pad.slice(0, 4), fracB: pad.slice(4, 8) };
+}
+
+function useAnimatedSol(target: number, active: boolean): number {
+  const [display, setDisplay] = useState(target);
+  const displayRef = useRef(target);
+
+  useEffect(() => {
+    displayRef.current = display;
+  }, [display]);
+
+  useEffect(() => {
+    if (!active) {
+      displayRef.current = target;
+      queueMicrotask(() => setDisplay(target));
+      return;
+    }
+    const from = displayRef.current;
+    const anim = animate(from, target, {
+      type: "spring",
+      stiffness: 220,
+      damping: 28,
+      mass: 0.7,
+      onUpdate: (latest: number) => {
+        displayRef.current = latest;
+        setDisplay(latest);
+      },
+    });
+    return () => anim.stop();
+  }, [target, active]);
+
+  return display;
+}
+
+function PremiumShell({ children }: { children: ReactNode }) {
+  return (
+    <div className="w-full rounded-3xl bg-gradient-to-br from-[#14F195]/75 via-emerald-500/35 to-violet-600/80 p-px shadow-[0_24px_80px_-32px_rgba(20,241,149,0.35)]">
+      <div className="rounded-3xl bg-neutral-950/55 backdrop-blur-md">{children}</div>
+    </div>
+  );
+}
+
 export function VaultCard() {
   const { wallet, signer, status } = useWallet();
   const { send, isSending } = useSendTransaction();
@@ -58,6 +117,7 @@ export function VaultCard() {
   const [vaultAddress, setVaultAddress] = useState<Address | null>(null);
 
   const walletAddress = wallet?.account.address;
+  const walletKey = walletAddress ? String(walletAddress) : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -106,8 +166,27 @@ export function VaultCard() {
     hasPyth: Boolean(pythQuote.data),
   });
 
+  const dynamicSolTarget =
+    simulated != null
+      ? simulated.dynamicSol
+      : hasVaultFunds
+        ? solInVault
+        : 0;
+
+  const animatedSol = useAnimatedSol(dynamicSolTarget, Boolean(simulated));
+
+  const sessionYieldSol = simulated?.yieldSol ?? null;
+
+  const lifetimeEarnedSol = useLifetimeSolEarned(
+    walletKey,
+    sessionYieldSol,
+    hasVaultFunds,
+  );
+
   const heroJito =
     simulated != null ? simulated.totalJito : (jitosolEquiv ?? null);
+
+  const parts = splitFixed8(animatedSol);
 
   const handleDeposit = useCallback(async () => {
     if (!walletAddress || !vaultAddress || !amount || !signer) return;
@@ -279,269 +358,325 @@ export function VaultCard() {
 
   if (status !== "connected") {
     return (
-      <section className="w-full space-y-4 rounded-2xl border border-border-low bg-card p-6 shadow-[0_20px_80px_-50px_rgba(0,0,0,0.35)]">
-        <div className="space-y-1">
-          <p className="text-lg font-semibold">YieldLink Vault</p>
-          <p className="text-sm text-muted">
-            Connect your wallet to interact with the vault program.
-          </p>
-        </div>
-        <div className="rounded-lg bg-cream/50 p-4 text-center text-sm text-muted">
-          Wallet not connected
-        </div>
-      </section>
+      <PremiumShell>
+        <section className="w-full space-y-4 p-6 sm:p-8">
+          <div className="space-y-1">
+            <p className="text-lg font-semibold tracking-tight text-zinc-100">
+              Your YieldLink Balance
+            </p>
+            <p className="text-sm text-zinc-400">
+              Connect your wallet to open the vault.
+            </p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-center text-sm text-zinc-400">
+            Wallet not connected
+          </div>
+        </section>
+      </PremiumShell>
     );
   }
 
   return (
-    <section className="w-full space-y-4 rounded-2xl border border-border-low bg-card p-6 shadow-[0_20px_80px_-50px_rgba(0,0,0,0.35)]">
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-1">
-          <p className="text-lg font-semibold">YieldLink Vault</p>
-          <p className="text-sm text-muted">
-            SOL lives on-chain in your PDA · JitoSOL is a UX headline from Pyth
-            ratios; demo yield ticks in the UI only (no liquid stake in this
-            MVP).
-          </p>
+    <PremiumShell>
+      <section className="w-full space-y-6 p-6 sm:p-8">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <h2 className="text-xl font-semibold tracking-tight text-zinc-50 sm:text-2xl">
+              Your YieldLink Balance
+            </h2>
+            <p className="max-w-prose text-sm leading-relaxed text-zinc-400">
+              On-chain balance is SOL lamports. “Dynamic SOL” adds a UI-only demo
+              yield (Pyth ratios + time). Not liquid stake or transferable JitoSOL.
+            </p>
+          </div>
+          <span
+            className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
+              (vaultLamports ?? 0n) > 0n
+                ? "border border-[#14F195]/40 bg-[#14F195]/10 text-[#14F195]"
+                : "border border-white/10 bg-white/5 text-zinc-400"
+            }`}
+          >
+            {(vaultLamports ?? 0n) > 0n ? "Active" : "Empty"}
+          </span>
         </div>
-        <span className="rounded-full bg-cream px-3 py-1 text-xs font-semibold uppercase tracking-wide text-foreground/80">
-          {(vaultLamports ?? 0n) > 0n ? "Has funds" : "Empty"}
-        </span>
-      </div>
 
-      <div className="rounded-xl border border-border-low bg-cream/30 p-4 space-y-2">
-        <p className="text-xs uppercase tracking-wide text-muted">
-          Position (primary: JitoSOL equivalent)
-        </p>
-        <p className="mt-1 text-3xl font-bold tabular-nums leading-tight">
-          ~
-          {heroJito != null
-            ? formatJitosolLike(heroJito)
-            : vaultLamports && vaultLamports > 0n
-              ? "—"
-              : formatJitosolLike(0)}{" "}
-          <span className="text-lg font-normal text-muted">JitoSOL</span>
-        </p>
-        {simulated && (
-          <p className="text-xs text-muted">
-            Principal ~{formatJitosolLike(simulated.principalJito)} + demo
-            accrual (~{(simulated.apr * 100).toFixed(0)}% APR, UI-only)
-          </p>
-        )}
-        <div className="text-sm text-muted space-y-1">
-          {vaultLamports && vaultLamports > 0n && (
-            <>
-              <p className="text-foreground/90">
-                <span className="font-medium tabular-nums">
-                  {lamportsToSolString(vaultLamports)}
-                </span>{" "}
-                <span>SOL backing</span>
-                {" · "}
-                <span className="tabular-nums font-medium">
-                  {usdEquiv != null ? formatUsd(usdEquiv) : "—"}
-                </span>{" "}
-                <span>(SOL/USD)</span>
-              </p>
-              {simulated && simulated.yieldJito > 0 && (
-                <p className="rounded-md bg-cream/60 px-2 py-1.5 text-xs text-foreground/90 tabular-nums">
-                  Simulated accrued:{" "}
-                  <span className="font-semibold">
-                    +{formatJitosolLike(simulated.yieldJito)} JitoSOL
+        {/* Hero — Dynamic SOL Value */}
+        <div className="space-y-4">
+          <div className="text-center sm:text-left">
+            <p className="text-[0.65rem] font-medium uppercase tracking-[0.2em] text-zinc-500">
+              Dynamic SOL Value
+            </p>
+            <p className="mt-1 text-xs text-zinc-500">
+              <span className="font-medium text-zinc-400">Staked Value</span>{" "}
+              <span className="text-zinc-600">·</span>{" "}
+              {heroJito != null ? (
+                <>
+                  ~
+                  <span className="tabular-nums text-zinc-300">
+                    {formatJitosolLike(heroJito)}
                   </span>{" "}
-                  ·{" "}
-                  <span className="font-semibold">
-                    {formatUsd(simulated.yieldUsd)}
-                  </span>{" "}
-                  · ticking {formatDurationSec(simulated.elapsedSec)}
-                </p>
-              )}
-              {pythQuote.data && (
-                <p className="text-xs">
-                  Ratio (Pyth spot):{" "}
-                  <span className="tabular-nums font-mono">
-                    {formatJitosolLike(pythQuote.data.jitosolPerSol)} JitoSOL /
-                    SOL
+                  JitoSOL ·{" "}
+                  <span className="tabular-nums">
+                    {usdEquiv != null ? formatUsd(usdEquiv) : "—"}
                   </span>
-                  {pythQuote.data.publishTimeEarliestSec > 0 && (
-                    <span className="ml-1 opacity-70">
-                      · feed t≈{" "}
-                      {new Date(
-                        pythQuote.data.publishTimeEarliestSec * 1000
-                      ).toLocaleTimeString()}
-                    </span>
-                  )}
-                </p>
+                </>
+              ) : hasVaultFunds && !pythQuote.data ? (
+                <span>Loading Pyth for ratio…</span>
+              ) : (
+                <span>—</span>
               )}
-            </>
-          )}
+            </p>
+
+            <motion.div
+              className="mt-4 font-mono tabular-nums text-3xl font-semibold tracking-tight text-zinc-50 sm:text-4xl md:text-5xl"
+              layout
+            >
+              <span className="select-none">{parts.intPart}</span>
+              <span className="text-zinc-500">.</span>
+              <span className="text-zinc-200">{parts.fracA}</span>
+              <motion.span
+                className="inline-block min-w-[4.5ch] text-emerald-200/95"
+                key={parts.fracB}
+                initial={{ y: 4, opacity: 0.35 }}
+                animate={{ y: 0, opacity: 1 }}
+                transition={{ type: "spring", stiffness: 500, damping: 35 }}
+              >
+                {parts.fracB}
+              </motion.span>{" "}
+              <span className="text-xl font-medium text-zinc-500 sm:text-2xl">
+                SOL
+              </span>
+            </motion.div>
+
+            <p className="mt-2 text-xs text-zinc-500">
+              Principal{" "}
+              <span className="font-mono text-zinc-400">
+                {vaultLamports
+                  ? lamportsToSolString(vaultLamports)
+                  : "0.00000000"}{" "}
+                SOL
+              </span>
+              {simulated && (
+                <>
+                  {" "}
+                  + yield{" "}
+                  <span
+                    className="font-mono"
+                    style={{ color: SOLANA_ACCENT }}
+                  >
+                    +{simulated.yieldSol.toFixed(8)}
+                  </span>{" "}
+                  SOL (simulated)
+                </>
+              )}
+            </p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <motion.div
+              layout
+              className="rounded-2xl border border-[#14F195]/25 bg-black/30 p-4 shadow-inner shadow-black/40"
+            >
+              <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                <Zap className="h-4 w-4" style={{ color: SOLANA_ACCENT }} />
+                Real-time Profit
+              </div>
+              <p
+                className="font-mono text-2xl font-semibold tabular-nums"
+                style={{ color: SOLANA_ACCENT }}
+              >
+                +
+                {(simulated?.yieldSol ?? 0).toFixed(8)}{" "}
+                <span className="text-base font-medium text-zinc-400">SOL</span>
+              </p>
+              <p className="mt-2 text-xs text-zinc-500">
+                Time generating yield:{" "}
+                <span className="font-mono text-zinc-300">
+                  {simulated
+                    ? formatDurationSec(simulated.elapsedSec)
+                    : hasVaultFunds
+                      ? "—"
+                      : "0s"}
+                </span>
+              </p>
+            </motion.div>
+
+            <motion.div
+              layout
+              className="rounded-2xl border border-white/10 bg-black/25 p-4 shadow-inner shadow-black/40"
+            >
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                Total SOL earned while sleeping
+              </div>
+              <motion.p
+                className="font-mono text-2xl font-semibold tabular-nums"
+                style={{ color: SOLANA_ACCENT }}
+                key={lifetimeEarnedSol.toFixed(12)}
+                initial={{ scale: 1.03 }}
+                animate={{ scale: 1 }}
+                transition={{ type: "spring", stiffness: 400, damping: 28 }}
+              >
+                +
+                {lifetimeEarnedSol.toFixed(8)}{" "}
+                <span className="text-base font-medium text-zinc-400">SOL</span>
+              </motion.p>
+              <p className="mt-2 text-xs text-zinc-500">
+                Lifetime (this browser). Never decreases; grows when session yield
+                rises.
+              </p>
+            </motion.div>
+          </div>
+
           {vaultAddress && (vaultLamports ?? 0n) > 0n && (
-            <p className="group flex items-center gap-1.5 pt-1">
+            <p className="group flex flex-wrap items-center gap-1.5 text-xs text-zinc-500">
+              <span className="text-zinc-500">Vault PDA ·</span>
               <a
                 href={getExplorerUrl(`/address/${vaultAddress}`)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="truncate font-mono text-xs text-muted underline underline-offset-2"
+                className="truncate font-mono underline decoration-zinc-600 underline-offset-2 hover:text-zinc-300"
               >
                 {vaultAddress}
               </a>
-              <span
-                className="relative cursor-default text-muted"
-                title="Program-derived vault PDA holding your deposited SOL. Only you may withdraw or send from it via this program."
+            </p>
+          )}
+
+          <div className="border-t border-white/10 pt-4 text-xs text-zinc-500">
+            {pythQuote.isLoading && !pythQuote.data && (
+              <p>Pyth Hermes: loading SOL + JitoSOL quotes…</p>
+            )}
+            {pythQuote.error && (
+              <p className="text-red-400">
+                Pyth:{" "}
+                {pythQuote.error instanceof Error
+                  ? pythQuote.error.message
+                  : String(pythQuote.error)}
+              </p>
+            )}
+            {pythQuote.data && !pythQuote.error && (
+              <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                Pyth ~2s ·{" "}
+                <span className="font-mono text-zinc-400">
+                  {formatJitosolLike(pythQuote.data.jitosolPerSol)} JitoSOL / SOL
+                </span>
+                {pythQuote.data.publishTimeEarliestSec > 0 && (
+                  <span className="opacity-80">
+                    · t≈{" "}
+                    {new Date(
+                      pythQuote.data.publishTimeEarliestSec * 1000,
+                    ).toLocaleTimeString()}
+                  </span>
+                )}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="space-y-4 border-t border-white/10 pt-6">
+          <div className="space-y-3">
+            <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-zinc-500">
+              Deposit
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="SOL amount"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                disabled={isSending}
+                className="min-w-[10rem] flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-[#14F195]/40 focus:ring-1 focus:ring-[#14F195]/30 disabled:pointer-events-none disabled:opacity-50"
+              />
+              <button
+                onClick={handleDeposit}
+                disabled={isSending || !amount || parseFloat(amount) <= 0}
+                className="rounded-xl bg-gradient-to-r from-[#14F195]/90 to-emerald-600/90 px-6 py-2.5 text-sm font-semibold text-neutral-950 shadow-lg shadow-[#14F195]/20 transition hover:brightness-110 disabled:pointer-events-none disabled:opacity-50"
               >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 16 16"
-                  fill="currentColor"
-                  className="h-3.5 w-3.5"
-                >
-                  <path
-                    fillRule="evenodd"
-                    d="M15 8A7 7 0 1 1 1 8a7 7 0 0 1 14 0ZM9 5a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM6.75 8a.75.75 0 0 0 0 1.5h.75v1.75a.75.75 0 0 0 1.5 0v-2.5A.75.75 0 0 0 8.25 8h-1.5Z"
-                    clipRule="evenodd"
-                  />
-                </svg>
-              </span>
-            </p>
-          )}
-        </div>
-        <div className="border-t border-border-low pt-3 text-xs text-muted">
-          {pythQuote.isLoading && !pythQuote.data && (
-            <p>Pyth Hermes: loading SOL + JitoSOL quotes…</p>
-          )}
-          {pythQuote.error && (
-            <p className="text-destructive">
-              Pyth:{" "}
-              {pythQuote.error instanceof Error
-                ? pythQuote.error.message
-                : String(pythQuote.error)}
-            </p>
-          )}
-          {pythQuote.data && !pythQuote.error && (
-            <p>
-              Pyth refreshed every ~2s from{" "}
-              <span className="font-mono">hermes.pyth.network</span> (mainnet
-              spot).
-            </p>
-          )}
-        </div>
-      </div>
+                {isSending ? "Confirming…" : "Deposit"}
+              </button>
+            </div>
+          </div>
 
-      <div className="space-y-3">
-        <p className="text-xs uppercase tracking-wide text-muted">Deposit</p>
-        <div className="flex gap-3 flex-wrap">
-          <input
-            type="number"
-            min="0"
-            step="0.01"
-            placeholder="Amount in SOL → JitoSOL position"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            disabled={isSending}
-            className="min-w-[10rem] flex-1 rounded-lg border border-border-low bg-card px-4 py-2.5 text-sm outline-none transition placeholder:text-muted focus:border-foreground/30 disabled:opacity-50 disabled:pointer-events-none"
-          />
+          <div className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+            <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-zinc-500">
+              Withdraw partial
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <input
+                type="number"
+                min="0"
+                step="0.001"
+                placeholder="SOL to wallet"
+                value={partialAmount}
+                onChange={(e) => setPartialAmount(e.target.value)}
+                disabled={isSending}
+                className="min-w-[10rem] flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-white/25 disabled:pointer-events-none disabled:opacity-50"
+              />
+              <button
+                onClick={handleWithdrawPartial}
+                disabled={
+                  isSending ||
+                  !partialAmount ||
+                  parseFloat(partialAmount) <= 0 ||
+                  !vaultLamports
+                }
+                className="rounded-xl border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-medium text-zinc-100 shadow-sm transition hover:bg-white/15 disabled:pointer-events-none disabled:opacity-50"
+              >
+                {isSending ? "Confirming…" : "Withdraw partial"}
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+            <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-zinc-500">
+              Send from vault
+            </p>
+            <input
+              type="text"
+              placeholder="Recipient Solana address"
+              value={sendRecipient}
+              onChange={(e) => setSendRecipient(e.target.value)}
+              disabled={isSending}
+              className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 font-mono text-xs text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-white/25 disabled:pointer-events-none disabled:opacity-50"
+            />
+            <div className="flex flex-wrap gap-3">
+              <input
+                type="number"
+                min="0"
+                step="0.001"
+                placeholder="SOL amount"
+                value={sendAmount}
+                onChange={(e) => setSendAmount(e.target.value)}
+                disabled={isSending}
+                className="min-w-[10rem] flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-white/25 disabled:pointer-events-none disabled:opacity-50"
+              />
+              <button
+                onClick={handleSendTo}
+                disabled={
+                  isSending ||
+                  !sendRecipient.trim() ||
+                  !sendAmount ||
+                  parseFloat(sendAmount) <= 0 ||
+                  !vaultLamports
+                }
+                className="rounded-xl bg-gradient-to-r from-violet-500/90 to-indigo-600/90 px-5 py-2.5 text-sm font-semibold text-white shadow-md transition hover:brightness-110 disabled:pointer-events-none disabled:opacity-50"
+              >
+                {isSending ? "Confirming…" : "Send"}
+              </button>
+            </div>
+          </div>
+
           <button
-            onClick={handleDeposit}
-            disabled={isSending || !amount || parseFloat(amount) <= 0}
-            className="rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground shadow-xs transition hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none"
+            onClick={handleWithdraw}
+            disabled={isSending || !vaultLamports}
+            className="w-full rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-sm font-medium text-zinc-200 shadow-sm transition hover:bg-white/10 disabled:pointer-events-none disabled:opacity-50"
           >
-            {isSending ? "Confirming…" : "Deposit"}
+            {isSending ? "Confirming…" : "Withdraw all (full drain)"}
           </button>
         </div>
-      </div>
-
-      <div className="space-y-3 rounded-xl border border-border-low bg-card/50 p-4">
-        <p className="text-xs uppercase tracking-wide text-muted">
-          Withdraw partial (keeps rent on vault)
-        </p>
-        <div className="flex gap-3 flex-wrap">
-          <input
-            type="number"
-            min="0"
-            step="0.001"
-            placeholder="SOL to your wallet"
-            value={partialAmount}
-            onChange={(e) => setPartialAmount(e.target.value)}
-            disabled={isSending}
-            className="min-w-[10rem] flex-1 rounded-lg border border-border-low bg-card px-4 py-2.5 text-sm outline-none transition placeholder:text-muted focus:border-foreground/30 disabled:opacity-50 disabled:pointer-events-none"
-          />
-          <button
-            onClick={handleWithdrawPartial}
-            disabled={
-              isSending ||
-              !partialAmount ||
-              parseFloat(partialAmount) <= 0 ||
-              !vaultLamports
-            }
-            className="rounded-lg border border-border-low bg-cream px-4 py-2.5 text-sm font-medium shadow-xs transition hover:bg-cream/80 disabled:opacity-50 disabled:pointer-events-none"
-          >
-            {isSending ? "Confirming…" : "Withdraw partial"}
-          </button>
-        </div>
-      </div>
-
-      <div className="space-y-3 rounded-xl border border-border-low bg-card/50 p-4">
-        <p className="text-xs uppercase tracking-wide text-muted">
-          Send to recipient (from vault)
-        </p>
-        <input
-          type="text"
-          placeholder="Recipient Solana address"
-          value={sendRecipient}
-          onChange={(e) => setSendRecipient(e.target.value)}
-          disabled={isSending}
-          className="w-full rounded-lg border border-border-low bg-card px-4 py-2.5 font-mono text-xs outline-none transition placeholder:text-muted focus:border-foreground/30 disabled:opacity-50 disabled:pointer-events-none"
-        />
-        <div className="flex gap-3 flex-wrap">
-          <input
-            type="number"
-            min="0"
-            step="0.001"
-            placeholder="SOL amount"
-            value={sendAmount}
-            onChange={(e) => setSendAmount(e.target.value)}
-            disabled={isSending}
-            className="min-w-[10rem] flex-1 rounded-lg border border-border-low bg-card px-4 py-2.5 text-sm outline-none transition placeholder:text-muted focus:border-foreground/30 disabled:opacity-50 disabled:pointer-events-none"
-          />
-          <button
-            onClick={handleSendTo}
-            disabled={
-              isSending ||
-              !sendRecipient.trim() ||
-              !sendAmount ||
-              parseFloat(sendAmount) <= 0 ||
-              !vaultLamports
-            }
-            className="rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-xs transition hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none"
-          >
-            {isSending ? "Confirming…" : "Send"}
-          </button>
-        </div>
-      </div>
-
-      <button
-        onClick={handleWithdraw}
-        disabled={isSending || !vaultLamports}
-        className="w-full rounded-lg border border-border-low bg-card px-4 py-2.5 text-sm font-medium shadow-xs transition hover:bg-cream disabled:opacity-50 disabled:pointer-events-none"
-      >
-        {isSending ? "Confirming…" : "Withdraw all (full drain)"}
-      </button>
-
-      <div className="border-t border-border-low pt-4 text-xs text-muted">
-        <p className="mb-2">
-          This vault is an{" "}
-          <a
-            href="https://www.anchor-lang.com/docs"
-            target="_blank"
-            rel="noreferrer"
-            className="font-medium underline underline-offset-2"
-          >
-            Anchor program
-          </a>{" "}
-          on devnet: balances are SOL lamports only. JitoSOL and the ticking
-          “accrued” line use Pyth + a local time-based demo (sessionStorage per
-          vault); not transferable JitoSOL and not real staking yield.
-        </p>
-      </div>
-    </section>
+      </section>
+    </PremiumShell>
   );
 }

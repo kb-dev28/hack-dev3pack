@@ -18,6 +18,12 @@ export type SimulatedJitoYield = {
   yieldUsd: number;
   elapsedSec: number;
   apr: number;
+  /** On-chain principal as SOL. */
+  principalSol: number;
+  /** Simulated yield expressed as SOL (JitoSOL yield ÷ spot ratio). */
+  yieldSol: number;
+  /** principalSol + yieldSol — UX “dynamic” balance. */
+  dynamicSol: number;
 };
 
 /**
@@ -113,6 +119,9 @@ export function useSimulatedJitoYield({
 
         const totalJito = principalJito + yieldJito;
         const yieldUsd = yieldJito * jitosolUsd!;
+        const yieldSol = yieldJito / jitosolPerSol!;
+        const principalSol = solInVault;
+        const dynamicSol = principalSol + yieldSol;
 
         return {
           principalJito,
@@ -121,6 +130,9 @@ export function useSimulatedJitoYield({
           yieldUsd,
           elapsedSec,
           apr,
+          principalSol,
+          yieldSol,
+          dynamicSol,
         };
       }
 
@@ -129,7 +141,7 @@ export function useSimulatedJitoYield({
       }
 
       tick();
-      const id = setInterval(tick, 1000);
+      const id = setInterval(tick, 100);
       return () => clearInterval(id);
     }
 
