@@ -5,6 +5,7 @@ import { useWallet } from "../lib/wallet/context";
 import { useSendTransaction } from "../lib/hooks/use-send-transaction";
 import { useBalance } from "../lib/hooks/use-balance";
 import { usePythJitosolQuote } from "../lib/hooks/use-pyth-jitosol-quote";
+import { useSimulatedJitoYield } from "../lib/hooks/use-simulated-jito-yield";
 import { lamportsFromSol, lamportsToSolString } from "../lib/lamports";
 import { address, type Address } from "@solana/kit";
 import { toast } from "sonner";
@@ -30,6 +31,17 @@ function formatUsd(n: number): string {
 function formatJitosolLike(n: number): string {
   if (!Number.isFinite(n)) return "—";
   return n.toLocaleString(undefined, { maximumFractionDigits: 6 });
+}
+
+function formatDurationSec(sec: number): string {
+  if (!Number.isFinite(sec)) return "—";
+  if (sec < 60) return `${Math.floor(sec)}s`;
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  if (sec < 3600) return `${m}m ${s}s`;
+  const h = Math.floor(sec / 3600);
+  const m2 = Math.floor((sec % 3600) / 60);
+  return `${h}h ${m2}m`;
 }
 
 export function VaultCard() {
@@ -85,6 +97,17 @@ export function VaultCard() {
       : null;
   const usdEquiv =
     pythQuote.data && hasVaultFunds ? solInVault * pythQuote.data.solUsd : null;
+
+  const simulated = useSimulatedJitoYield({
+    vaultPda: vaultAddress ? String(vaultAddress) : null,
+    vaultLamports: vaultLamports ?? null,
+    jitosolPerSol: pythQuote.data?.jitosolPerSol,
+    jitosolUsd: pythQuote.data?.jitosolUsd,
+    hasPyth: Boolean(pythQuote.data),
+  });
+
+  const heroJito =
+    simulated != null ? simulated.totalJito : (jitosolEquiv ?? null);
 
   const handleDeposit = useCallback(async () => {
     if (!walletAddress || !vaultAddress || !amount || !signer) return;
@@ -258,7 +281,7 @@ export function VaultCard() {
     return (
       <section className="w-full space-y-4 rounded-2xl border border-border-low bg-card p-6 shadow-[0_20px_80px_-50px_rgba(0,0,0,0.35)]">
         <div className="space-y-1">
-          <p className="text-lg font-semibold">SOL Vault</p>
+          <p className="text-lg font-semibold">YieldLink Vault</p>
           <p className="text-sm text-muted">
             Connect your wallet to interact with the vault program.
           </p>
@@ -274,10 +297,11 @@ export function VaultCard() {
     <section className="w-full space-y-4 rounded-2xl border border-border-low bg-card p-6 shadow-[0_20px_80px_-50px_rgba(0,0,0,0.35)]">
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
-          <p className="text-lg font-semibold">SOL Vault</p>
+          <p className="text-lg font-semibold">YieldLink Vault</p>
           <p className="text-sm text-muted">
-            Native SOL in your vault PDA · Pyth JITOSOL/USD + SOL/USD (mainnet
-            Hermes) for display ratios.
+            SOL lives on-chain in your PDA · JitoSOL is a UX headline from Pyth
+            ratios; demo yield ticks in the UI only (no liquid stake in this
+            MVP).
           </p>
         </div>
         <span className="rounded-full bg-cream px-3 py-1 text-xs font-semibold uppercase tracking-wide text-foreground/80">
@@ -287,24 +311,50 @@ export function VaultCard() {
 
       <div className="rounded-xl border border-border-low bg-cream/30 p-4 space-y-2">
         <p className="text-xs uppercase tracking-wide text-muted">
-          Vault Balance
+          Position (primary: JitoSOL equivalent)
         </p>
-        <p className="mt-1 text-3xl font-bold tabular-nums">
-          {vaultLamports ? lamportsToSolString(vaultLamports) : "0"}{" "}
-          <span className="text-lg font-normal text-muted">SOL</span>
+        <p className="mt-1 text-3xl font-bold tabular-nums leading-tight">
+          ~
+          {heroJito != null
+            ? formatJitosolLike(heroJito)
+            : vaultLamports && vaultLamports > 0n
+              ? "—"
+              : formatJitosolLike(0)}{" "}
+          <span className="text-lg font-normal text-muted">JitoSOL</span>
         </p>
-        <div className="text-sm text-muted space-y-0.5">
+        {simulated && (
+          <p className="text-xs text-muted">
+            Principal ~{formatJitosolLike(simulated.principalJito)} + demo
+            accrual (~{(simulated.apr * 100).toFixed(0)}% APR, UI-only)
+          </p>
+        )}
+        <div className="text-sm text-muted space-y-1">
           {vaultLamports && vaultLamports > 0n && (
             <>
-              <p>
-                <span className="text-foreground font-medium tabular-nums">
-                  ~
-                  {jitosolEquiv != null ? formatJitosolLike(jitosolEquiv) : "—"}
+              <p className="text-foreground/90">
+                <span className="font-medium tabular-nums">
+                  {lamportsToSolString(vaultLamports)}
                 </span>{" "}
-                <span>JitoSOL</span>
+                <span>SOL backing</span>
                 {" · "}
-                <span>{usdEquiv != null ? formatUsd(usdEquiv) : "—"} USD</span>
+                <span className="tabular-nums font-medium">
+                  {usdEquiv != null ? formatUsd(usdEquiv) : "—"}
+                </span>{" "}
+                <span>(SOL/USD)</span>
               </p>
+              {simulated && simulated.yieldJito > 0 && (
+                <p className="rounded-md bg-cream/60 px-2 py-1.5 text-xs text-foreground/90 tabular-nums">
+                  Simulated accrued:{" "}
+                  <span className="font-semibold">
+                    +{formatJitosolLike(simulated.yieldJito)} JitoSOL
+                  </span>{" "}
+                  ·{" "}
+                  <span className="font-semibold">
+                    {formatUsd(simulated.yieldUsd)}
+                  </span>{" "}
+                  · ticking {formatDurationSec(simulated.elapsedSec)}
+                </p>
+              )}
               {pythQuote.data && (
                 <p className="text-xs">
                   Ratio (Pyth spot):{" "}
@@ -383,7 +433,7 @@ export function VaultCard() {
             type="number"
             min="0"
             step="0.01"
-            placeholder="Amount in SOL"
+            placeholder="Amount in SOL → JitoSOL position"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             disabled={isSending}
@@ -487,8 +537,9 @@ export function VaultCard() {
           >
             Anchor program
           </a>{" "}
-          on devnet. JitoSOL numbers are UX from Pyth; on-chain balances are SOL
-          lamports only.
+          on devnet: balances are SOL lamports only. JitoSOL and the ticking
+          “accrued” line use Pyth + a local time-based demo (sessionStorage per
+          vault); not transferable JitoSOL and not real staking yield.
         </p>
       </div>
     </section>
