@@ -26,6 +26,7 @@
   "version": "0.0.0",
   "private": true,
   "dependencies": {
+    "@pythnetwork/price-service-client": "^1.11.0",
     "@solana/kit": "^6.3.0",
     "@solana/kit-client-rpc": "^0.7.0",
     "@solana/kit-plugin-rpc": "^0.7.0",
