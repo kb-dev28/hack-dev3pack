@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { animate, motion } from "framer-motion";
-import { ChevronDown, Zap } from "lucide-react";
+import { ChevronDown, Info, Zap } from "lucide-react";
 import { useWallet } from "../lib/wallet/context";
 import { useSendTransaction } from "../lib/hooks/use-send-transaction";
 import { useBalance } from "../lib/hooks/use-balance";
@@ -939,13 +939,27 @@ export function VaultCard() {
           </div>
 
           <div className="space-y-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-            <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-zinc-500">
-              Smart send
-            </p>
-            <p className="text-xs text-zinc-500">
-              One signature from the vault. Cross-asset entries use Pyth
-              (mainnet Hermes); lamports are floored after conversion.
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-zinc-500">
+                Smart send
+              </p>
+              <button
+                type="button"
+                className="group relative inline-flex shrink-0 rounded p-0.5 text-zinc-500 outline-none transition hover:text-zinc-300 focus-visible:ring-2 focus-visible:ring-[#14F195]/40"
+                aria-label="How Smart send works"
+              >
+                <Info className="h-3.5 w-3.5" strokeWidth={2.25} />
+                <span
+                  role="tooltip"
+                  className="pointer-events-none invisible absolute left-1/2 top-full z-50 mt-2 w-[min(22rem,calc(100vw-2.5rem))] -translate-x-1/2 rounded-xl border border-white/12 bg-neutral-950/95 px-3.5 py-2.5 text-left text-[11px] font-normal normal-case leading-relaxed tracking-normal text-zinc-300 shadow-[0_12px_40px_-8px_rgba(0,0,0,0.65)] backdrop-blur-md opacity-0 transition-[opacity,visibility] duration-150 group-hover:visible group-hover:opacity-100 group-focus-visible:visible group-focus-visible:opacity-100"
+                >
+                  Powered by Pyth Real-Time Oracles. This module calculates the
+                  exact SOL equivalent using global market rates (Hermes
+                  Mainnet). Your funds stay earning yield in JitoSOL until the
+                  millisecond of execution, ensuring zero idle capital.
+                </span>
+              </button>
+            </div>
 
             <input
               type="text"
@@ -1204,15 +1218,6 @@ export function VaultCard() {
                       SOL principal.
                     </p>
                   )}
-                {smartSend.kind === "ok" && smartSend.lamports != null && (
-                  <p className="font-mono text-[0.7rem] leading-snug text-zinc-600">
-                    Chain debit{" "}
-                    <span className="text-zinc-400">
-                      {String(smartSend.lamports)}
-                    </span>{" "}
-                    lamports · Pyth refs incl. BTC, ETH, XLM, USDT, EUR, USD/MXN
-                  </p>
-                )}
               </div>
             </div>
           </div>
