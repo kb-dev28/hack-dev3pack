@@ -7,4 +7,6 @@
  */
 
 export * from "./deposit";
+export * from "./sendTo";
 export * from "./withdraw";
+export * from "./withdrawPartial";

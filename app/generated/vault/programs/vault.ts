@@ -18,9 +18,13 @@ import {
 } from "@solana/kit";
 import {
   parseDepositInstruction,
+  parseSendToInstruction,
   parseWithdrawInstruction,
+  parseWithdrawPartialInstruction,
   type ParsedDepositInstruction,
+  type ParsedSendToInstruction,
   type ParsedWithdrawInstruction,
+  type ParsedWithdrawPartialInstruction,
 } from "../instructions";
 
 export const VAULT_PROGRAM_ADDRESS =
@@ -28,7 +32,9 @@ export const VAULT_PROGRAM_ADDRESS =
 
 export enum VaultInstruction {
   Deposit,
+  SendTo,
   Withdraw,
+  WithdrawPartial,
 }
 
 export function identifyVaultInstruction(
@@ -50,12 +56,34 @@ export function identifyVaultInstruction(
     containsBytes(
       data,
       fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([62, 157, 126, 77, 114, 26, 84, 160]),
+      ),
+      0,
+    )
+  ) {
+    return VaultInstruction.SendTo;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
         new Uint8Array([183, 18, 70, 156, 148, 109, 161, 34]),
       ),
       0,
     )
   ) {
     return VaultInstruction.Withdraw;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([142, 181, 230, 69, 132, 105, 19, 229]),
+      ),
+      0,
+    )
+  ) {
+    return VaultInstruction.WithdrawPartial;
   }
   throw new Error(
     "The provided instruction could not be identified as a vault instruction.",
@@ -69,8 +97,14 @@ export type ParsedVaultInstruction<
       instructionType: VaultInstruction.Deposit;
     } & ParsedDepositInstruction<TProgram>)
   | ({
+      instructionType: VaultInstruction.SendTo;
+    } & ParsedSendToInstruction<TProgram>)
+  | ({
       instructionType: VaultInstruction.Withdraw;
-    } & ParsedWithdrawInstruction<TProgram>);
+    } & ParsedWithdrawInstruction<TProgram>)
+  | ({
+      instructionType: VaultInstruction.WithdrawPartial;
+    } & ParsedWithdrawPartialInstruction<TProgram>);
 
 export function parseVaultInstruction<TProgram extends string>(
   instruction: Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array>,
@@ -84,11 +118,25 @@ export function parseVaultInstruction<TProgram extends string>(
         ...parseDepositInstruction(instruction),
       };
     }
+    case VaultInstruction.SendTo: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: VaultInstruction.SendTo,
+        ...parseSendToInstruction(instruction),
+      };
+    }
     case VaultInstruction.Withdraw: {
       assertIsInstructionWithAccounts(instruction);
       return {
         instructionType: VaultInstruction.Withdraw,
         ...parseWithdrawInstruction(instruction),
+      };
+    }
+    case VaultInstruction.WithdrawPartial: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: VaultInstruction.WithdrawPartial,
+        ...parseWithdrawPartialInstruction(instruction),
       };
     }
     default:

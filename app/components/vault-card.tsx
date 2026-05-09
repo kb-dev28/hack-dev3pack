@@ -1,31 +1,52 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useWallet } from "../lib/wallet/context";
 import { useSendTransaction } from "../lib/hooks/use-send-transaction";
 import { useBalance } from "../lib/hooks/use-balance";
+import { usePythJitosolQuote } from "../lib/hooks/use-pyth-jitosol-quote";
 import { lamportsFromSol, lamportsToSolString } from "../lib/lamports";
-import { type Address } from "@solana/kit";
+import { address, type Address } from "@solana/kit";
 import { toast } from "sonner";
 import {
   getDepositInstruction,
   getWithdrawInstruction,
   getWithdrawInstructionAsync,
+  getWithdrawPartialInstruction,
+  getSendToInstruction,
 } from "../generated/vault";
 import { parseTransactionError } from "../lib/errors";
 import { useCluster } from "./cluster-context";
+
+function formatUsd(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  return n.toLocaleString(undefined, {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatJitosolLike(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  return n.toLocaleString(undefined, { maximumFractionDigits: 6 });
+}
 
 export function VaultCard() {
   const { wallet, signer, status } = useWallet();
   const { send, isSending } = useSendTransaction();
   const { getExplorerUrl } = useCluster();
 
+  const pythQuote = usePythJitosolQuote();
+
   const [amount, setAmount] = useState("");
+  const [partialAmount, setPartialAmount] = useState("");
+  const [sendRecipient, setSendRecipient] = useState("");
+  const [sendAmount, setSendAmount] = useState("");
   const [vaultAddress, setVaultAddress] = useState<Address | null>(null);
 
   const walletAddress = wallet?.account.address;
 
-  // Derive vault PDA from generated IDL client
   useEffect(() => {
     let cancelled = false;
 
@@ -50,11 +71,20 @@ export function VaultCard() {
     };
   }, [signer]);
 
-  // Get balances
   const walletBalance = useBalance(walletAddress);
   const walletLamports = walletBalance?.lamports;
   const vaultBalance = useBalance(vaultAddress ?? undefined);
   const vaultLamports = vaultBalance?.lamports;
+
+  const vl = vaultLamports ?? null;
+  const hasVaultFunds = vl != null && vl > 0n;
+  const solInVault = vl != null ? Number(vl) / 1_000_000_000 : 0;
+  const jitosolEquiv =
+    pythQuote.data && hasVaultFunds
+      ? solInVault * pythQuote.data.jitosolPerSol
+      : null;
+  const usdEquiv =
+    pythQuote.data && hasVaultFunds ? solInVault * pythQuote.data.solUsd : null;
 
   const handleDeposit = useCallback(async () => {
     if (!walletAddress || !vaultAddress || !amount || !signer) return;
@@ -93,7 +123,15 @@ export function VaultCard() {
       console.error("Deposit failed:", err);
       toast.error(parseTransactionError(err));
     }
-  }, [walletAddress, vaultAddress, amount, signer, send, getExplorerUrl]);
+  }, [
+    walletAddress,
+    vaultAddress,
+    amount,
+    signer,
+    send,
+    getExplorerUrl,
+    walletLamports,
+  ]);
 
   const handleWithdraw = useCallback(async () => {
     if (!walletAddress || !vaultAddress || !signer) return;
@@ -124,6 +162,98 @@ export function VaultCard() {
     }
   }, [walletAddress, vaultAddress, signer, send, getExplorerUrl]);
 
+  const handleWithdrawPartial = useCallback(async () => {
+    if (!walletAddress || !vaultAddress || !signer || !partialAmount) return;
+    const sol = parseFloat(partialAmount);
+    if (!Number.isFinite(sol) || sol <= 0) {
+      toast.error("Enter a valid partial amount in SOL.");
+      return;
+    }
+
+    try {
+      const instruction = getWithdrawPartialInstruction({
+        signer,
+        vault: vaultAddress,
+        amount: lamportsFromSol(sol),
+      });
+      const signature = await send({ instructions: [instruction] });
+      toast.success("Partial withdrawal confirmed!", {
+        description: (
+          <a
+            href={getExplorerUrl(`/tx/${signature}`)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline"
+          >
+            View transaction
+          </a>
+        ),
+      });
+      setPartialAmount("");
+    } catch (err) {
+      console.error("Partial withdraw failed:", err);
+      toast.error(parseTransactionError(err));
+    }
+  }, [
+    walletAddress,
+    vaultAddress,
+    signer,
+    partialAmount,
+    send,
+    getExplorerUrl,
+  ]);
+
+  const handleSendTo = useCallback(async () => {
+    if (!walletAddress || !vaultAddress || !signer || !sendAmount) return;
+    const sol = parseFloat(sendAmount);
+    if (!Number.isFinite(sol) || sol <= 0) {
+      toast.error("Enter a valid send amount in SOL.");
+      return;
+    }
+
+    let recipientAddr: Address;
+    try {
+      recipientAddr = address(sendRecipient.trim());
+    } catch {
+      toast.error("Invalid recipient address.");
+      return;
+    }
+
+    try {
+      const instruction = getSendToInstruction({
+        signer,
+        vault: vaultAddress,
+        recipient: recipientAddr,
+        amount: lamportsFromSol(sol),
+      });
+      const signature = await send({ instructions: [instruction] });
+      toast.success("Sent from vault!", {
+        description: (
+          <a
+            href={getExplorerUrl(`/tx/${signature}`)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline"
+          >
+            View transaction
+          </a>
+        ),
+      });
+      setSendAmount("");
+    } catch (err) {
+      console.error("send_to failed:", err);
+      toast.error(parseTransactionError(err));
+    }
+  }, [
+    walletAddress,
+    vaultAddress,
+    signer,
+    sendRecipient,
+    sendAmount,
+    send,
+    getExplorerUrl,
+  ]);
+
   if (status !== "connected") {
     return (
       <section className="w-full space-y-4 rounded-2xl border border-border-low bg-card p-6 shadow-[0_20px_80px_-50px_rgba(0,0,0,0.35)]">
@@ -146,7 +276,8 @@ export function VaultCard() {
         <div className="space-y-1">
           <p className="text-lg font-semibold">SOL Vault</p>
           <p className="text-sm text-muted">
-            Deposit SOL into your personal vault PDA and withdraw anytime.
+            Native SOL in your vault PDA · Pyth JITOSOL/USD + SOL/USD (mainnet
+            Hermes) for display ratios.
           </p>
         </div>
         <span className="rounded-full bg-cream px-3 py-1 text-xs font-semibold uppercase tracking-wide text-foreground/80">
@@ -154,8 +285,7 @@ export function VaultCard() {
         </span>
       </div>
 
-      {/* Vault Balance */}
-      <div className="rounded-xl border border-border-low bg-cream/30 p-4">
+      <div className="rounded-xl border border-border-low bg-cream/30 p-4 space-y-2">
         <p className="text-xs uppercase tracking-wide text-muted">
           Vault Balance
         </p>
@@ -163,40 +293,92 @@ export function VaultCard() {
           {vaultLamports ? lamportsToSolString(vaultLamports) : "0"}{" "}
           <span className="text-lg font-normal text-muted">SOL</span>
         </p>
-        {vaultAddress && (vaultLamports ?? 0n) > 0n && (
-          <p className="group mt-2 flex items-center gap-1.5">
-            <a
-              href={getExplorerUrl(`/address/${vaultAddress}`)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="truncate font-mono text-xs text-muted underline underline-offset-2"
-            >
-              {vaultAddress}
-            </a>
-            <span
-              className="relative cursor-default text-muted"
-              title="This is your vault PDA — a program-derived account that holds your deposited SOL. Only you can withdraw from it."
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 16 16"
-                fill="currentColor"
-                className="h-3.5 w-3.5"
+        <div className="text-sm text-muted space-y-0.5">
+          {vaultLamports && vaultLamports > 0n && (
+            <>
+              <p>
+                <span className="text-foreground font-medium tabular-nums">
+                  ~
+                  {jitosolEquiv != null ? formatJitosolLike(jitosolEquiv) : "—"}
+                </span>{" "}
+                <span>JitoSOL</span>
+                {" · "}
+                <span>{usdEquiv != null ? formatUsd(usdEquiv) : "—"} USD</span>
+              </p>
+              {pythQuote.data && (
+                <p className="text-xs">
+                  Ratio (Pyth spot):{" "}
+                  <span className="tabular-nums font-mono">
+                    {formatJitosolLike(pythQuote.data.jitosolPerSol)} JitoSOL /
+                    SOL
+                  </span>
+                  {pythQuote.data.publishTimeEarliestSec > 0 && (
+                    <span className="ml-1 opacity-70">
+                      · feed t≈{" "}
+                      {new Date(
+                        pythQuote.data.publishTimeEarliestSec * 1000
+                      ).toLocaleTimeString()}
+                    </span>
+                  )}
+                </p>
+              )}
+            </>
+          )}
+          {vaultAddress && (vaultLamports ?? 0n) > 0n && (
+            <p className="group flex items-center gap-1.5 pt-1">
+              <a
+                href={getExplorerUrl(`/address/${vaultAddress}`)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="truncate font-mono text-xs text-muted underline underline-offset-2"
               >
-                <path
-                  fillRule="evenodd"
-                  d="M15 8A7 7 0 1 1 1 8a7 7 0 0 1 14 0ZM9 5a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM6.75 8a.75.75 0 0 0 0 1.5h.75v1.75a.75.75 0 0 0 1.5 0v-2.5A.75.75 0 0 0 8.25 8h-1.5Z"
-                  clipRule="evenodd"
-                />
-              </svg>
-            </span>
-          </p>
-        )}
+                {vaultAddress}
+              </a>
+              <span
+                className="relative cursor-default text-muted"
+                title="Program-derived vault PDA holding your deposited SOL. Only you may withdraw or send from it via this program."
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 16 16"
+                  fill="currentColor"
+                  className="h-3.5 w-3.5"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M15 8A7 7 0 1 1 1 8a7 7 0 0 1 14 0ZM9 5a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM6.75 8a.75.75 0 0 0 0 1.5h.75v1.75a.75.75 0 0 0 1.5 0v-2.5A.75.75 0 0 0 8.25 8h-1.5Z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              </span>
+            </p>
+          )}
+        </div>
+        <div className="border-t border-border-low pt-3 text-xs text-muted">
+          {pythQuote.isLoading && !pythQuote.data && (
+            <p>Pyth Hermes: loading SOL + JitoSOL quotes…</p>
+          )}
+          {pythQuote.error && (
+            <p className="text-destructive">
+              Pyth:{" "}
+              {pythQuote.error instanceof Error
+                ? pythQuote.error.message
+                : String(pythQuote.error)}
+            </p>
+          )}
+          {pythQuote.data && !pythQuote.error && (
+            <p>
+              Pyth refreshed every ~2s from{" "}
+              <span className="font-mono">hermes.pyth.network</span> (mainnet
+              spot).
+            </p>
+          )}
+        </div>
       </div>
 
-      {/* Deposit Form */}
       <div className="space-y-3">
-        <div className="flex gap-3">
+        <p className="text-xs uppercase tracking-wide text-muted">Deposit</p>
+        <div className="flex gap-3 flex-wrap">
           <input
             type="number"
             min="0"
@@ -205,38 +387,95 @@ export function VaultCard() {
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             disabled={isSending}
-            className="flex-1 rounded-lg border border-border-low bg-card px-4 py-2.5 text-sm outline-none transition placeholder:text-muted focus:border-foreground/30 disabled:opacity-50 disabled:pointer-events-none"
+            className="min-w-[10rem] flex-1 rounded-lg border border-border-low bg-card px-4 py-2.5 text-sm outline-none transition placeholder:text-muted focus:border-foreground/30 disabled:opacity-50 disabled:pointer-events-none"
           />
           <button
             onClick={handleDeposit}
-            disabled={
-              isSending ||
-              !amount ||
-              parseFloat(amount) <= 0 ||
-              (vaultLamports ?? 0n) > 0n
-            }
+            disabled={isSending || !amount || parseFloat(amount) <= 0}
             className="rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground shadow-xs transition hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none"
           >
-            {isSending ? "Confirming..." : "Deposit"}
+            {isSending ? "Confirming…" : "Deposit"}
           </button>
         </div>
-        {(vaultLamports ?? 0n) > 0n && (
-          <p className="text-xs text-muted">
-            Vault already has funds. Withdraw first before depositing again.
-          </p>
-        )}
       </div>
 
-      {/* Withdraw Button */}
+      <div className="space-y-3 rounded-xl border border-border-low bg-card/50 p-4">
+        <p className="text-xs uppercase tracking-wide text-muted">
+          Withdraw partial (keeps rent on vault)
+        </p>
+        <div className="flex gap-3 flex-wrap">
+          <input
+            type="number"
+            min="0"
+            step="0.001"
+            placeholder="SOL to your wallet"
+            value={partialAmount}
+            onChange={(e) => setPartialAmount(e.target.value)}
+            disabled={isSending}
+            className="min-w-[10rem] flex-1 rounded-lg border border-border-low bg-card px-4 py-2.5 text-sm outline-none transition placeholder:text-muted focus:border-foreground/30 disabled:opacity-50 disabled:pointer-events-none"
+          />
+          <button
+            onClick={handleWithdrawPartial}
+            disabled={
+              isSending ||
+              !partialAmount ||
+              parseFloat(partialAmount) <= 0 ||
+              !vaultLamports
+            }
+            className="rounded-lg border border-border-low bg-cream px-4 py-2.5 text-sm font-medium shadow-xs transition hover:bg-cream/80 disabled:opacity-50 disabled:pointer-events-none"
+          >
+            {isSending ? "Confirming…" : "Withdraw partial"}
+          </button>
+        </div>
+      </div>
+
+      <div className="space-y-3 rounded-xl border border-border-low bg-card/50 p-4">
+        <p className="text-xs uppercase tracking-wide text-muted">
+          Send to recipient (from vault)
+        </p>
+        <input
+          type="text"
+          placeholder="Recipient Solana address"
+          value={sendRecipient}
+          onChange={(e) => setSendRecipient(e.target.value)}
+          disabled={isSending}
+          className="w-full rounded-lg border border-border-low bg-card px-4 py-2.5 font-mono text-xs outline-none transition placeholder:text-muted focus:border-foreground/30 disabled:opacity-50 disabled:pointer-events-none"
+        />
+        <div className="flex gap-3 flex-wrap">
+          <input
+            type="number"
+            min="0"
+            step="0.001"
+            placeholder="SOL amount"
+            value={sendAmount}
+            onChange={(e) => setSendAmount(e.target.value)}
+            disabled={isSending}
+            className="min-w-[10rem] flex-1 rounded-lg border border-border-low bg-card px-4 py-2.5 text-sm outline-none transition placeholder:text-muted focus:border-foreground/30 disabled:opacity-50 disabled:pointer-events-none"
+          />
+          <button
+            onClick={handleSendTo}
+            disabled={
+              isSending ||
+              !sendRecipient.trim() ||
+              !sendAmount ||
+              parseFloat(sendAmount) <= 0 ||
+              !vaultLamports
+            }
+            className="rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-xs transition hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none"
+          >
+            {isSending ? "Confirming…" : "Send"}
+          </button>
+        </div>
+      </div>
+
       <button
         onClick={handleWithdraw}
         disabled={isSending || !vaultLamports}
         className="w-full rounded-lg border border-border-low bg-card px-4 py-2.5 text-sm font-medium shadow-xs transition hover:bg-cream disabled:opacity-50 disabled:pointer-events-none"
       >
-        {isSending ? "Confirming..." : "Withdraw All"}
+        {isSending ? "Confirming…" : "Withdraw all (full drain)"}
       </button>
 
-      {/* Educational Footer */}
       <div className="border-t border-border-low pt-4 text-xs text-muted">
         <p className="mb-2">
           This vault is an{" "}
@@ -248,26 +487,9 @@ export function VaultCard() {
           >
             Anchor program
           </a>{" "}
-          deployed on devnet. Want to deploy your own?
+          on devnet. JitoSOL numbers are UX from Pyth; on-chain balances are SOL
+          lamports only.
         </p>
-        <div className="flex flex-wrap gap-3">
-          <a
-            href="https://www.anchor-lang.com/docs/quickstart"
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 rounded-md bg-cream px-2 py-1 font-medium transition hover:bg-cream/70"
-          >
-            Anchor Quickstart
-          </a>
-          <a
-            href="https://solana.com/docs/programs/deploying"
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 rounded-md bg-cream px-2 py-1 font-medium transition hover:bg-cream/70"
-          >
-            Deploy Programs
-          </a>
-        </div>
       </div>
     </section>
   );

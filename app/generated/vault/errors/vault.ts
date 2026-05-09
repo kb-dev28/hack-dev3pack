@@ -14,20 +14,28 @@ import {
 } from "@solana/kit";
 import { VAULT_PROGRAM_ADDRESS } from "../programs";
 
-/** VaultAlreadyExists: Vault already exists */
-export const VAULT_ERROR__VAULT_ALREADY_EXISTS = 0x1770; // 6000
 /** InvalidAmount: Invalid amount */
-export const VAULT_ERROR__INVALID_AMOUNT = 0x1771; // 6001
+export const VAULT_ERROR__INVALID_AMOUNT = 0x1770; // 6000
+/** VaultBelowRentMinimum: Vault lamports fell below rent-exempt minimum */
+export const VAULT_ERROR__VAULT_BELOW_RENT_MINIMUM = 0x1771; // 6001
+/** InsufficientVaultBalance: Insufficient spendable vault balance */
+export const VAULT_ERROR__INSUFFICIENT_VAULT_BALANCE = 0x1772; // 6002
+/** InvalidRecipient: Invalid recipient */
+export const VAULT_ERROR__INVALID_RECIPIENT = 0x1773; // 6003
 
 export type VaultError =
+  | typeof VAULT_ERROR__INSUFFICIENT_VAULT_BALANCE
   | typeof VAULT_ERROR__INVALID_AMOUNT
-  | typeof VAULT_ERROR__VAULT_ALREADY_EXISTS;
+  | typeof VAULT_ERROR__INVALID_RECIPIENT
+  | typeof VAULT_ERROR__VAULT_BELOW_RENT_MINIMUM;
 
 let vaultErrorMessages: Record<VaultError, string> | undefined;
 if (process.env.NODE_ENV !== "production") {
   vaultErrorMessages = {
+    [VAULT_ERROR__INSUFFICIENT_VAULT_BALANCE]: `Insufficient spendable vault balance`,
     [VAULT_ERROR__INVALID_AMOUNT]: `Invalid amount`,
-    [VAULT_ERROR__VAULT_ALREADY_EXISTS]: `Vault already exists`,
+    [VAULT_ERROR__INVALID_RECIPIENT]: `Invalid recipient`,
+    [VAULT_ERROR__VAULT_BELOW_RENT_MINIMUM]: `Vault lamports fell below rent-exempt minimum`,
   };
 }
 
