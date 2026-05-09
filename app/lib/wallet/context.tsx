@@ -12,9 +12,16 @@ import {
 } from "react";
 import type { TransactionSigner } from "@solana/kit";
 import type { WalletConnector, WalletSession } from "./types";
-import { discoverWallets, watchWallets } from "./standard";
+import {
+  discoverWallets,
+  watchWallets,
+  findRegisteredSolanaWallet,
+  subscribeStandardWalletAccountsChanged,
+  createSolanaWalletSession,
+} from "./standard";
 import { createWalletSigner } from "./signer";
 import { useCluster } from "../../components/cluster-context";
+import { getWalletStandardChain } from "../solana-client";
 
 const WALLET_STATUS = {
   DISCONNECTED: "disconnected",
@@ -42,7 +49,7 @@ const STORAGE_KEY = "solana:last-connector";
 
 export function WalletProvider({ children }: PropsWithChildren) {
   const { cluster } = useCluster();
-  const chain = `solana:${cluster}`;
+  const chain = getWalletStandardChain(cluster);
 
   const [connectors, setConnectors] = useState<WalletConnector[]>(() =>
     typeof window === "undefined" ? [] : discoverWallets()
@@ -88,6 +95,32 @@ export function WalletProvider({ children }: PropsWithChildren) {
 
     return unsubscribe;
   }, [handleWalletsChanged, runAutoConnect]);
+
+  const connectedConnectorId = session?.connector.name;
+
+  // Phantom / multi-account wallets switch the active signer in-extension — mirror that in React state.
+  useEffect(() => {
+    if (status !== WALLET_STATUS.CONNECTED || !connectedConnectorId) {
+      return undefined;
+    }
+
+    const injected = findRegisteredSolanaWallet(connectedConnectorId);
+    if (!injected) {
+      return undefined;
+    }
+
+    return subscribeStandardWalletAccountsChanged(injected, (authorized) => {
+      const nextAccount = authorized[0];
+      if (!nextAccount) return;
+
+      setSession((prev) => {
+        if (!prev || prev.account.address === nextAccount.address) {
+          return prev;
+        }
+        return createSolanaWalletSession(injected, nextAccount);
+      });
+    });
+  }, [status, connectedConnectorId]);
 
   const connect = useCallback(async (connectorId: string) => {
     const connector = connectorsRef.current.find((c) => c.id === connectorId);

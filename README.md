@@ -16,6 +16,8 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000), connect your wallet, and interact with the vault.
 
+**Phantom / Wallet Standard:** the app uses CAIP-2 chain ids (e.g. devnet `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1`), not `solana:devnet`. Pick the **same cluster** in Phantom (e.g. Devnet) as in the app header. For localnet, set `NEXT_PUBLIC_LOCALNET_WALLET_CHAIN` to `solana:` + the first 32 characters of `solana genesis-hash -u http://127.0.0.1:8899` if signing fails.
+
 ## What's Included
 
 - **Wallet connection** via wallet-standard with auto-discovery and dropdown UI
@@ -95,7 +97,11 @@ To test against a local validator instead of devnet:
 
 ## Deploy Your Own Vault
 
-The included vault program is already deployed to devnet. To deploy your own:
+The repo points at devnet program `AhG1mX9GuvsiZSvoHE4yjro92xbP5Rswx87NnusoQPrf`. The **source in this checkout** expects that address to run the matching binary (multiple deposits, `withdraw_partial`, `send_to`). If you pulled a newer codebase but still hit **`VaultAlreadyExists`** on deposit or unrecognized instructions when withdrawing partially, Devnet still has an **older deployed build** until you redeploy yourself (below). To use your **own** program ID: `anchor keys sync`, rebuild, deploy, run `npm run setup`.
+
+Previously the template advertised a shared devnet build; upgrading that canonical deployment is independent of local development. Treat **your deployed program** as the source of truth.
+
+To deploy **your own** vault:
 
 ### Prerequisites
 
