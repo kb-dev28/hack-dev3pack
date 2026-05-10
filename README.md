@@ -1,8 +1,10 @@
-# hack-dev3pack
+# EverYield (`hack-dev3pack`)
 
-Next.js starter with Tailwind CSS, `@solana/kit`, and an Anchor vault program example.
+**EverYield** is a hackathon-style MVP on Solana: a **non-custodial PDA vault** (native SOL lamports) plus **Smart Send** — pay a recipient an amount expressed in **crypto or fiat**, converted with **Pyth Hermes** (mainnet spot prices) while funds stay in the vault narrative until you send. Built on Next.js, `@solana/kit`, and an **Anchor** vault program.
 
-## Getting Started
+> Naming note: internal planning docs still say *YieldLink*; the shipped UI and header brand are **EverYield**.
+
+## Getting started
 
 ```shell
 npx -y create-solana-dapp@latest -t solana-foundation/templates/kit/hack-dev3pack
@@ -10,162 +12,131 @@ npx -y create-solana-dapp@latest -t solana-foundation/templates/kit/hack-dev3pac
 
 ```shell
 npm install
-npm run setup   # Builds the Anchor program and generates the TypeScript client
+npm run setup   # Builds the Anchor program and generates the TypeScript client (Codama)
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), connect your wallet, and interact with the vault.
+Open [http://localhost:3000](http://localhost:3000), connect your wallet, and use the vault + Smart Send.
 
-**Phantom / Wallet Standard:** the app uses CAIP-2 chain ids (e.g. devnet `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1`), not `solana:devnet`. Pick the **same cluster** in Phantom (e.g. Devnet) as in the app header. For localnet, set `NEXT_PUBLIC_LOCALNET_WALLET_CHAIN` to `solana:` + the first 32 characters of `solana genesis-hash -u http://127.0.0.1:8899` if signing fails.
+**Phantom / Wallet Standard:** the app uses CAIP-2 chain ids (e.g. devnet `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1`), not `solana:devnet`. Pick the **same cluster** in the wallet as in the app header. For localnet, set `NEXT_PUBLIC_LOCALNET_WALLET_CHAIN` to `solana:` + the first 32 characters of `solana genesis-hash -u http://127.0.0.1:8899` if signing fails.
 
-## What's Included
+## Devnet program (contract address)
 
-- **Wallet connection** via wallet-standard with auto-discovery and dropdown UI
-- **Cluster switching** — devnet, testnet, mainnet, and localnet from the header
-- **Wallet balance** display with airdrop button (devnet/testnet/localnet)
-- **SOL Vault program** — deposit and withdraw SOL from a personal PDA vault
-- **Toast notifications** with explorer links for every transaction
-- **Error handling** — human-readable messages for common Solana and program errors
-- **Codama-generated client** — type-safe program interactions using `@solana/kit`
-- **Tailwind CSS v4** with light/dark mode toggle
+| Item        | Value |
+| ----------- | ----- |
+| **Program ID** | `AhG1mX9GuvsiZSvoHE4yjro92xbP5Rswx87NnusoQPrf` |
+| **Cluster**    | Devnet (default in UI) |
+| **Explorer**   | [Solana Explorer — program](https://explorer.solana.com/address/AhG1mX9GuvsiZSvoHE4yjro92xbP5Rswx87NnusoQPrf?cluster=devnet) |
+
+If you deploy your own program, run `anchor keys sync`, rebuild, deploy, then `npm run setup` so the generated client matches your ID.
+
+## What’s in the MVP (UI + program)
+
+- **Site header** — EverYield + tagline, help (?) with product tooltip, theme + cluster + wallet; Pyth ratio still appears inside the help tooltip when Hermes data is loaded.
+- **Wallet card** — balance, truncated **address + copy** on the top row; on non-mainnet, a compact **devnet airdrop** action under the SOL line.
+- **Vault** — deposit; withdraw **partial** or **total** (close); balance display framed as **JitoSOL** with SOL headline + optional **simulated** yield tick driven by Pyth ratio (`useSimulatedJitoYield`).
+- **Smart Send** — recipient + amount in a chosen reference (default **ETH** in crypto mode to avoid redundant SOL); Hermes-backed conversion; optional **protocol fee** (see env below); validation UX (e.g. highlight recipient when amount is set but address is empty).
+- **Toasts** with explorer links; readable errors for common Solana / program failures.
+- **Codama-generated** type-safe client under `app/generated/vault/`.
+- **Tailwind CSS v4**, light/dark.
+
+Instructions on-chain today: **deposit**, **withdraw** (full to signer + close), **withdraw_partial**, **send_to** (owner-signed transfer from vault PDA to any recipient, respecting rent).
+
+## Pyth (this repo)
+
+- The **program does not** read Pyth accounts; pricing is **off-chain** via `@pythnetwork/hermes-client` (`getLatestPriceUpdates`, `parsed: true`) against `https://hermes.pyth.network` for feeds configured in `app/lib/pyth/constants.ts` (e.g. SOL/USD, JITOSOL/USD).
+- Hook: `app/lib/hooks/use-pyth-jitosol-quote.ts` (SWR, ~2s refresh).
+- Optional env: `NEXT_PUBLIC_PYTH_HERMES_URL` to override the Hermes base URL.
+- `@pythnetwork/pyth-solana-receiver` is a dependency for a possible future **on-chain** Pull Oracle path; the current MVP does not post price updates inside the program.
+
+## Configuration (`.env`)
+
+See [`.env.example`](./.env.example). Notable:
+
+| Variable | Purpose |
+| -------- | ------- |
+| `NEXT_PUBLIC_PROTOCOL_TREASURY` | Optional treasury pubkey; if set, Smart Send splits a **tiny fee** (see `app/lib/protocol-fee.ts`) from the gross lamports in the same transaction. |
+| `NEXT_PUBLIC_PYTH_HERMES_URL` | Optional Hermes endpoint override. |
+
+Never commit real private keys or keypair JSON.
 
 ## Stack
 
-| Layer          | Technology                       |
-| -------------- | -------------------------------- |
+| Layer          | Technology |
+| -------------- | ---------- |
 | Frontend       | Next.js 16, React 19, TypeScript |
-| Styling        | Tailwind CSS v4                  |
-| Solana Client  | `@solana/kit`, wallet-standard   |
-| Program Client | Codama-generated, `@solana/kit`  |
-| Program        | Anchor (Rust)                    |
+| Styling        | Tailwind CSS v4 |
+| Solana client  | `@solana/kit`, wallet-standard |
+| Program client | Codama-generated from Anchor IDL |
+| Program        | Anchor (Rust) |
+| Prices (MVP)   | Pyth Hermes (`@pythnetwork/hermes-client`), SWR |
 
-## Project Structure
+## Project structure (high level)
 
 ```
-├── app/
-│   ├── components/
-│   │   ├── cluster-context.tsx  # Cluster state (React context + localStorage)
-│   │   ├── cluster-select.tsx   # Cluster switcher dropdown
-│   │   ├── grid-background.tsx  # Solana-branded decorative grid
-│   │   ├── providers.tsx        # Wallet + theme providers
-│   │   ├── theme-toggle.tsx     # Light/dark mode toggle
-│   │   ├── vault-card.tsx       # Vault deposit/withdraw UI
-│   │   └── wallet-button.tsx    # Wallet connect/disconnect dropdown
-│   ├── generated/vault/        # Codama-generated program client
-│   ├── lib/
-│   │   ├── wallet/             # Wallet-standard connection layer
-│   │   │   ├── types.ts        # Wallet types
-│   │   │   ├── standard.ts     # Wallet discovery + session creation
-│   │   │   ├── signer.ts       # WalletSession → TransactionSigner
-│   │   │   └── context.tsx     # WalletProvider + useWallet() hook
-│   │   ├── hooks/
-│   │   │   ├── use-balance.ts  # SWR-based balance fetching
-│   │   │   └── use-send-transaction.ts  # Transaction send with loading state
-│   │   ├── cluster.ts          # Cluster endpoints + RPC factory
-│   │   ├── lamports.ts         # SOL/lamports conversion
-│   │   ├── send-transaction.ts # Transaction build + sign + send pipeline
-│   │   ├── errors.ts           # Transaction error parsing
-│   │   └── explorer.ts         # Explorer URL builder + address helpers
-│   └── page.tsx                # Main page
-├── anchor/                     # Anchor workspace
-│   └── programs/vault/         # Vault program (Rust)
-└── codama.json                 # Codama client generation config
+app/
+  components/          # UI: vault-card, site-chrome-header, wallet-button, cluster-select, …
+  generated/vault/     # Codama client
+  lib/
+    pyth/              # Hermes fetch + send conversion helpers
+    hooks/             # balances, send tx, Pyth quote, simulated yield, …
+    protocol-fee.ts    # Optional Smart Send fee (ppm)
+anchor/
+  programs/vault/      # Anchor program + LiteSVM tests
+codama.json
 ```
 
-## Local Development
+## Local development (local validator)
 
-To test against a local validator instead of devnet:
-
-1. **Start a local validator**
-
-   ```bash
-   solana-test-validator
-   ```
-
-2. **Deploy the program locally**
-
-   ```bash
-   solana config set --url localhost
-   cd anchor
-   anchor build
-   anchor deploy
-   cd ..
-   npm run codama:js   # Regenerate client with local program ID
-   ```
-
-3. **Switch to localnet** in the app using the cluster selector in the header.
-
-## Deploy Your Own Vault
-
-The repo points at devnet program `AhG1mX9GuvsiZSvoHE4yjro92xbP5Rswx87NnusoQPrf`. The **source in this checkout** expects that address to run the matching binary (multiple deposits, `withdraw_partial`, `send_to`). If you pulled a newer codebase but still hit **`VaultAlreadyExists`** on deposit or unrecognized instructions when withdrawing partially, Devnet still has an **older deployed build** until you redeploy yourself (below). To use your **own** program ID: `anchor keys sync`, rebuild, deploy, run `npm run setup`.
-
-Previously the template advertised a shared devnet build; upgrading that canonical deployment is independent of local development. Treat **your deployed program** as the source of truth.
-
-To deploy **your own** vault:
-
-### Prerequisites
-
-- [Rust](https://rustup.rs/)
-- [Solana CLI](https://solana.com/docs/intro/installation)
-- [Anchor](https://www.anchor-lang.com/docs/installation)
-
-### Steps
-
-1. **Configure Solana CLI for devnet**
-
-   ```bash
-   solana config set --url devnet
-   ```
-
-2. **Create a wallet (if needed) and fund it**
-
-   ```bash
-   solana-keygen new
-   solana airdrop 2
-   ```
-
-3. **Build and deploy the program**
-
-   ```bash
-   cd anchor
-   anchor build
-   anchor keys sync    # Updates program ID in source
-   anchor build        # Rebuild with new ID
-   anchor deploy
-   cd ..
-   ```
-
-4. **Regenerate the client and restart**
-   ```bash
-   npm run setup   # Rebuilds program and regenerates client
-   npm run dev
-   ```
+1. `solana-test-validator`
+2. `solana config set --url localhost` → `cd anchor && anchor build && anchor deploy` → `cd .. && npm run codama:js`
+3. Select **localnet** in the app header.
 
 ## Testing
 
-Tests use [LiteSVM](https://github.com/LiteSVM/litesvm), a fast lightweight Solana VM for testing.
-
 ```bash
-npm run anchor-build   # Build the program first
-npm run anchor-test    # Run tests
+npm run anchor-build
+npm run anchor-test
 ```
 
-The tests are in `anchor/programs/vault/src/tests.rs` and automatically use the program ID from `declare_id!`.
+Tests live in `anchor/programs/vault/src/tests.rs` (LiteSVM).
 
-## Regenerating the Client
+## Regenerating the client
 
-If you modify the program, regenerate the TypeScript client:
+After IDL / program changes:
 
 ```bash
-npm run setup   # Or: npm run anchor-build && npm run codama:js
+npm run setup   # or: npm run anchor-build && npm run codama:js
 ```
 
-This uses [Codama](https://github.com/codama-idl/codama) to generate a type-safe client from the Anchor IDL.
+## Internal docs (`docs/internal/`)
 
-## Learn More
+That folder is **listed in `.gitignore`** — it is **not** part of a normal GitHub clone. Locally you may still have notes such as:
 
-- [Solana Docs](https://solana.com/docs) — core concepts and guides
-- [Anchor Docs](https://www.anchor-lang.com/docs/introduction) — program development framework
-- [Deploying Programs](https://solana.com/docs/programs/deploying) — deployment guide
-- [@solana/kit](https://github.com/anza-xyz/kit) — Solana JavaScript SDK
-- [Codama](https://github.com/codama-idl/codama) — client generation from IDL
+| File | Contents (summary) |
+| ---- | -------------------- |
+| `idea-mvp.md` | Original product concept (YieldLink narrative, judge flow, JitoSOL + Pyth story). |
+| `roadmap-mvp.md` | Phased checklist (many items are already reflected in the current codebase). |
+| `sdk-pyth.md` | Hermes-only UI vs future on-chain Pull Oracle; env vars; feed pointers → see `app/lib/pyth/`. |
+| `hackathon.md` | Track notes (e.g. qualification: unique Rust program on devnet, README with program address, public repo, demo video + live link). |
+| `primer-deploy.md` | Operator scratch (deploy log). **Do not** paste keypair material into the public README. |
+
+For anything judges or open contributors must read, prefer a **public** doc path (e.g. `docs/public/`) without secrets.
+
+## If something is missing for a full hackathon submission
+
+Add these yourself when you have them (they are **not** in the internal notes as stable values):
+
+- **Live demo URL** (e.g. Vercel) and **demo video** link (often required, usually under 3 minutes).
+- **Explicit feed IDs** in the README if you want judges to verify Hermes mappings without opening `constants.ts`.
+- **Team / repo** links and any **sponsor-specific** checklist beyond the generic Solana track bullets.
+
+---
+
+## Learn more
+
+- [Solana Docs](https://solana.com/docs)
+- [Anchor Docs](https://www.anchor-lang.com/docs/introduction)
+- [Pyth Network Docs](https://docs.pyth.network/)
+- [@solana/kit](https://github.com/anza-xyz/kit)
+- [Codama](https://github.com/codama-idl/codama)

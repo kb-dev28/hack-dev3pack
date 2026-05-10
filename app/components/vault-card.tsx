@@ -14,7 +14,6 @@ import {
   ArrowUpCircle,
   ChevronDown,
   Copy,
-  HelpCircle,
   Info,
 } from "lucide-react";
 import { useWallet } from "../lib/wallet/context";
@@ -58,15 +57,6 @@ function formatUsd(n: number): string {
   });
 }
 
-/** Hero fiat line: ≈ $X,XXX.XX (no duplicate “USD” after symbol). */
-function formatUsdApproxHero(n: number): string {
-  if (!Number.isFinite(n)) return "—";
-  return `$${n.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
-
 function formatEur(n: number): string {
   if (!Number.isFinite(n)) return "—";
   return n.toLocaleString("de-DE", {
@@ -83,11 +73,6 @@ function formatMxn(n: number): string {
     currency: "MXN",
     maximumFractionDigits: 2,
   });
-}
-
-function formatJitosolLike(n: number): string {
-  if (!Number.isFinite(n)) return "—";
-  return n.toLocaleString(undefined, { maximumFractionDigits: 6 });
 }
 
 function formatExecutedSol(lp: Lamports): string {
@@ -264,7 +249,7 @@ export function VaultCard() {
   const [smartSendDenom, setSmartSendDenom] =
     useState<SmartSendDenom>("crypto");
   const [sendRefCurrency, setSendRefCurrency] =
-    useState<SendRefCurrency>("sol");
+    useState<SendRefCurrency>("eth");
   const [vaultAddress, setVaultAddress] = useState<Address | null>(null);
   const [vaultHubTab, setVaultHubTab] = useState<"deposit" | "withdraw">(
     "deposit"
@@ -332,12 +317,6 @@ export function VaultCard() {
   const animatedSol = useAnimatedSol(dynamicSolTarget, Boolean(simulated));
 
   const parts = splitFixed8(animatedSol);
-
-  const heroUsdApprox =
-    pythQuote.data != null &&
-    (hasVaultFunds || (Number.isFinite(animatedSol) && animatedSol > 0))
-      ? animatedSol * pythQuote.data.solUsd
-      : null;
 
   const smartSend = useMemo(() => {
     const raw = sendAmount.trim();
@@ -430,6 +409,10 @@ export function VaultCard() {
           pythQuote.data
         )
       : null;
+
+  /** Guide judges: amount chosen but no recipient yet. */
+  const recipientMissingWhileAmountSet =
+    sendAmount.trim() !== "" && sendRecipient.trim() === "";
 
   const smartSendFeePreview = useMemo(() => {
     if (
@@ -809,99 +792,6 @@ export function VaultCard() {
   return (
     <PremiumShell>
       <section className="w-full space-y-1.5 p-2 sm:p-3">
-        {/* Header: title + LIVE PYTH top-right */}
-        <div className="flex w-full min-w-0 items-start justify-between gap-3 border-b border-white/10 pb-2">
-          <div className="min-w-0">
-            <h1 className="text-4xl font-bold leading-[0.95] tracking-tight text-zinc-50 sm:text-5xl">
-              EverYield
-            </h1>
-            <p className="mt-0.5 text-base leading-snug text-emerald-400/85 sm:text-lg">
-              Grow perpetually, spend instantly.
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center gap-2 self-start pt-1">
-            <button
-              type="button"
-              className="group relative shrink-0 rounded-full p-1 text-zinc-400 outline-none transition hover:text-zinc-200 focus-visible:ring-2 focus-visible:ring-emerald-500/40"
-              aria-label="Product and technical details"
-            >
-              <HelpCircle
-                className="h-4 w-4 sm:h-[1.15rem] sm:w-[1.15rem]"
-                strokeWidth={1.75}
-              />
-              <span
-                role="tooltip"
-                className="pointer-events-none invisible absolute right-0 top-full z-50 mt-1.5 w-[min(22rem,calc(100vw-2.5rem))] rounded-xl border border-white/12 bg-neutral-950/95 px-3.5 py-3.5 text-left shadow-xl backdrop-blur-md opacity-0 transition-[opacity,visibility] duration-150 group-hover:visible group-hover:opacity-100 group-focus-visible:visible group-focus-visible:opacity-100"
-              >
-                <div className="space-y-2 border-b border-white/10 pb-2.5 text-[11px] leading-snug text-zinc-400">
-                  <p>
-                    <span className="font-semibold text-zinc-200">
-                      Strategy:
-                    </span>{" "}
-                    Assets are optimized in JitoSOL for real-time value
-                    accrual.
-                  </p>
-                  <p>
-                    <span className="font-semibold text-zinc-200">
-                      Oracle:
-                    </span>{" "}
-                    Prices synced via Pyth Network Hermes (Mainnet).
-                  </p>
-                  <p>
-                    <span className="font-semibold text-zinc-200">
-                      Safety:
-                    </span>{" "}
-                    Funds are held in a non-custodial PDA Vault (Devnet).
-                  </p>
-                  <p>
-                    <span className="font-semibold text-zinc-200">
-                      Transparency:
-                    </span>{" "}
-                    The displayed SOL balance grows as the JitoSOL/SOL ratio
-                    increases.
-                  </p>
-                </div>
-                <div className="mt-2.5 space-y-2 text-[10px] leading-relaxed text-zinc-500">
-                  <p>
-                    <span className="font-semibold text-zinc-400">
-                      Balance and display
-                    </span>
-                    <br />
-                    Position held in JitoSOL — main number is SOL for
-                    readability. On-chain balance is native SOL lamports in the
-                    vault PDA.
-                  </p>
-                  {pythQuote.data && (
-                    <p className="font-mono text-[10px] text-zinc-500">
-                      <span className="font-sans font-semibold text-zinc-400">
-                        Pyth spot ratio:
-                      </span>{" "}
-                      {formatJitosolLike(pythQuote.data.jitosolPerSol)} JitoSOL /
-                      1 SOL
-                    </p>
-                  )}
-                </div>
-              </span>
-            </button>
-            {pythQuote.data && (
-              <span className="inline-flex items-center gap-1.5 text-[9px] font-medium uppercase tracking-wide text-emerald-400/90">
-                <span
-                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400/90 shadow-[0_0_6px_rgba(52,211,153,0.45)] animate-pulse"
-                  aria-hidden
-                />
-                LIVE PYTH FEED
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Long copy — band between header and control center */}
-        <div className="border-b border-white/10 bg-white/[0.02] py-1.5">
-          <p className="w-full text-[11px] leading-tight text-zinc-500 sm:text-xs">
-            High-yield vault, liquid for spending — Jito & Pyth.
-          </p>
-        </div>
-
         {/* Unified control: Wallet | Vault | Actions (titles + Deposit/Withdraw top-aligned) */}
         <div className="space-y-1 border-b border-white/10 pb-1.5 pt-1.5">
           <div className="flex w-full min-w-0 flex-row flex-wrap items-start justify-between gap-2">
@@ -910,51 +800,47 @@ export function VaultCard() {
                 <span className="text-[11px] font-semibold tracking-tight text-zinc-200 sm:text-xs">
                   Wallet balance
                 </span>
-                {cluster !== "mainnet" && (
+                {walletAddress ? (
                   <button
                     type="button"
-                    onClick={handleWalletAirdrop}
-                    className="shrink-0 cursor-pointer rounded-lg border border-white/10 px-2 py-0.5 text-[10px] font-medium text-zinc-300 transition hover:bg-white/5"
+                    onClick={handleCopyWalletAddress}
+                    className="flex max-w-[min(100%,11rem)] shrink-0 cursor-pointer items-center gap-1 truncate rounded-md border border-white/10 bg-white/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-zinc-300 transition hover:border-white/20 hover:bg-white/[0.07] hover:text-zinc-100 sm:max-w-[13rem] sm:text-[11px]"
+                    title={String(walletAddress)}
                   >
-                    Airdrop
+                    {ellipsify(walletAddress, 4)}
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="h-3 w-3 shrink-0"
+                    >
+                      {walletCopied ? (
+                        <path d="M20 6 9 17l-5-5" />
+                      ) : (
+                        <>
+                          <rect
+                            width="14"
+                            height="14"
+                            x="8"
+                            y="8"
+                            rx="2"
+                            ry="2"
+                          />
+                          <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                        </>
+                      )}
+                    </svg>
                   </button>
+                ) : (
+                  <span className="shrink-0 font-mono text-[10px] text-zinc-500">
+                    —
+                  </span>
                 )}
               </div>
-              {walletAddress && (
-                <button
-                  type="button"
-                  onClick={handleCopyWalletAddress}
-                  className="mt-0.5 flex max-w-full cursor-pointer items-center gap-1.5 truncate font-mono text-[10px] text-zinc-400 transition hover:text-zinc-200"
-                >
-                  {ellipsify(walletAddress, 4)}
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="h-3 w-3 shrink-0"
-                  >
-                    {walletCopied ? (
-                      <path d="M20 6 9 17l-5-5" />
-                    ) : (
-                      <>
-                        <rect
-                          width="14"
-                          height="14"
-                          x="8"
-                          y="8"
-                          rx="2"
-                          ry="2"
-                        />
-                        <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
-                      </>
-                    )}
-                  </svg>
-                </button>
-              )}
               <p className="mt-1 font-mono text-lg font-bold tabular-nums tracking-tight text-zinc-50 sm:text-xl">
                 {walletLamports != null
                   ? lamportsToSolString(walletLamports)
@@ -963,6 +849,15 @@ export function VaultCard() {
                   SOL
                 </span>
               </p>
+              {cluster !== "mainnet" && (
+                <button
+                  type="button"
+                  onClick={handleWalletAirdrop}
+                  className="mt-1 w-full cursor-pointer rounded-md border border-dashed border-white/15 py-0.5 text-center text-[10px] font-medium text-zinc-500 transition hover:border-[#14F195]/35 hover:bg-[#14F195]/8 hover:text-zinc-300"
+                >
+                  Devnet: tap for 1 SOL airdrop
+                </button>
+              )}
             </div>
 
             <div className="flex min-w-0 flex-1 flex-col items-center px-0.5 pt-0 text-center sm:px-1.5">
@@ -997,13 +892,6 @@ export function VaultCard() {
               </motion.div>
               <p className="mt-0 text-[10px] leading-tight text-zinc-500 sm:text-[11px]">
                 JitoSOL
-              </p>
-              <p className="text-[10px] font-medium tabular-nums leading-tight text-zinc-600">
-                {heroUsdApprox != null
-                  ? `≈ ${formatUsdApproxHero(heroUsdApprox)}`
-                  : pythQuote.isLoading
-                    ? "…"
-                    : "—"}
               </p>
             </div>
 
@@ -1185,10 +1073,10 @@ export function VaultCard() {
           </div>
         )}
 
-        <div className="space-y-5 border-t border-white/10 pt-5 sm:pt-6">
-          <div className="space-y-6 rounded-2xl border border-white/15 bg-white/[0.055] p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.05)_inset] sm:p-8">
-            <div className="flex items-center gap-3">
-              <p className="text-lg font-semibold tracking-tight text-zinc-50 sm:text-xl">
+        <div className="space-y-3 border-t border-white/10 pt-4 sm:pt-5">
+          <div className="space-y-3 rounded-2xl border border-white/15 bg-white/[0.055] p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.05)_inset] sm:p-6">
+            <div className="flex items-center gap-2.5">
+              <p className="text-2xl font-bold tracking-tight text-zinc-50 sm:text-3xl">
                 Smart send
               </p>
               <button
@@ -1196,7 +1084,7 @@ export function VaultCard() {
                 className="group relative inline-flex shrink-0 rounded p-0.5 text-zinc-500 outline-none transition hover:text-zinc-300 focus-visible:ring-2 focus-visible:ring-[#14F195]/40"
                 aria-label="How Smart send works"
               >
-                <Info className="h-4 w-4 sm:h-[1.125rem] sm:w-[1.125rem]" strokeWidth={2.25} />
+                <Info className="h-5 w-5 sm:h-6 sm:w-6" strokeWidth={2.25} />
                 <span
                   role="tooltip"
                   className="pointer-events-none invisible absolute left-1/2 top-full z-50 mt-2 w-[min(22rem,calc(100vw-2.5rem))] -translate-x-1/2 rounded-xl border border-white/12 bg-neutral-950/95 px-3.5 py-2.5 text-left text-[11px] font-normal normal-case leading-relaxed tracking-normal text-zinc-300 shadow-[0_12px_40px_-8px_rgba(0,0,0,0.65)] backdrop-blur-md opacity-0 transition-[opacity,visibility] duration-150 group-hover:visible group-hover:opacity-100 group-focus-visible:visible group-focus-visible:opacity-100"
@@ -1215,12 +1103,30 @@ export function VaultCard() {
               value={sendRecipient}
               onChange={(e) => setSendRecipient(e.target.value)}
               disabled={isSending}
-              className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-4 font-mono text-base text-zinc-200 outline-none transition placeholder:text-zinc-400 focus:border-white/25 focus:ring-2 focus:ring-violet-500/25 disabled:pointer-events-none disabled:opacity-50 sm:px-5 sm:py-[1.125rem]"
+              aria-invalid={recipientMissingWhileAmountSet}
+              aria-describedby={
+                recipientMissingWhileAmountSet
+                  ? "smart-send-recipient-hint"
+                  : undefined
+              }
+              className={`w-full rounded-xl border bg-white/5 px-4 py-3 font-mono text-base text-zinc-200 outline-none transition placeholder:text-zinc-400 disabled:pointer-events-none disabled:opacity-50 sm:px-5 sm:py-3.5 ${
+                recipientMissingWhileAmountSet
+                  ? "border-red-500/80 ring-2 ring-red-500/30 focus:border-red-400 focus:ring-red-500/35"
+                  : "border-white/10 focus:border-white/25 focus:ring-2 focus:ring-violet-500/25"
+              }`}
             />
+            {recipientMissingWhileAmountSet && (
+              <p
+                id="smart-send-recipient-hint"
+                className="text-xs font-medium text-red-400/95"
+              >
+                Paste a Solana address to continue.
+              </p>
+            )}
 
             <motion.div
               layout
-              className="space-y-4 text-base leading-relaxed text-zinc-300"
+              className="space-y-2 text-base leading-snug text-zinc-300"
             >
               <div className="flex flex-wrap items-center gap-2">
                 <button
@@ -1229,7 +1135,7 @@ export function VaultCard() {
                   onClick={() => {
                     setSmartSendDenom("crypto");
                     setSendRefCurrency((prev) =>
-                      isCryptoRef(prev) ? prev : "sol"
+                      isCryptoRef(prev) ? prev : "eth"
                     );
                     setSendAmount("");
                   }}
@@ -1262,7 +1168,7 @@ export function VaultCard() {
               </div>
 
               <div className="flex flex-wrap items-end gap-x-2.5 gap-y-2 text-zinc-400">
-                <span className="shrink-0 text-zinc-400">I want to send</span>
+                <span className="shrink-0 text-zinc-400">Amount</span>
                 <span
                   className="pb-0.5 text-xl tabular-nums sm:text-2xl"
                   style={{ color: SOLANA_ACCENT }}
@@ -1281,7 +1187,7 @@ export function VaultCard() {
                   disabled={isSending}
                   className="w-[7.5rem] border-0 border-b border-zinc-600 bg-transparent pb-0.5 text-xl font-semibold tabular-nums text-zinc-100 outline-none transition placeholder:text-zinc-400 focus:border-[#14F195]/70 disabled:opacity-50 sm:w-40 sm:text-2xl md:w-48"
                 />
-                <span className="pb-0.5 text-zinc-400">as</span>
+                <span className="pb-0.5 text-zinc-400">in</span>
                 <label className="relative inline-flex items-center pb-0.5">
                   <select
                     value={sendRefCurrency}
@@ -1291,7 +1197,7 @@ export function VaultCard() {
                       setSendAmount("");
                     }}
                     disabled={isSending}
-                    className="min-h-14 min-w-[14rem] max-w-[min(100vw-2rem,24rem)] cursor-pointer appearance-none rounded-xl border border-white/15 bg-black/35 py-3.5 pl-3.5 pr-10 text-base font-medium text-zinc-100 outline-none transition hover:bg-black/45 focus-visible:ring-2 focus-visible:ring-violet-500/40 disabled:cursor-not-allowed disabled:opacity-50 sm:min-w-[15rem]"
+                    className="min-h-12 min-w-[14rem] max-w-[min(100vw-2rem,24rem)] cursor-pointer appearance-none rounded-xl border border-white/15 bg-black/35 py-2.5 pl-3 pr-10 text-base font-medium text-zinc-100 outline-none transition hover:bg-black/45 focus-visible:ring-2 focus-visible:ring-violet-500/40 disabled:cursor-not-allowed disabled:opacity-50 sm:min-w-[15rem]"
                   >
                     {smartSendDenomOptions.map(([value, label]) => (
                       <option key={value} value={value}>
@@ -1307,13 +1213,13 @@ export function VaultCard() {
               </div>
 
               {(sendRefCurrency === "eur" || sendRefCurrency === "mxn") && (
-                <p className="text-[0.7rem] font-medium leading-snug text-amber-400/95">
+                <p className="text-[0.7rem] font-medium leading-tight text-amber-400/95">
                   Nota: Los mercados FX cierran los fines de semana; el precio
                   de Pyth será el último cierre.
                 </p>
               )}
 
-              <p className="min-h-[1.5rem] text-base leading-snug text-zinc-400">
+              <p className="min-h-[1.25rem] text-base leading-tight text-zinc-400">
                 {smartSend.kind === "ok" && smartSend.lamports != null ? (
                   smartSendFeePreview ? (
                     <>
@@ -1324,7 +1230,7 @@ export function VaultCard() {
                         </span>{" "}
                         SOL.
                       </span>
-                      <span className="mt-1.5 block">
+                      <span className="mt-1 block">
                         Recipient receives{" "}
                         <span className="font-mono text-lg font-medium text-zinc-100">
                           {formatExecutedSol(sol(smartSendFeePreview.net))}
@@ -1364,7 +1270,7 @@ export function VaultCard() {
               </p>
 
               {sendRefCurrency === "usd" && (
-                <div className="flex flex-wrap items-center gap-2 pt-1">
+                <div className="flex flex-wrap items-center gap-2 pt-0.5">
                   <span className="text-[0.65rem] uppercase tracking-wider text-zinc-600">
                     Quick
                   </span>
@@ -1387,7 +1293,7 @@ export function VaultCard() {
               )}
 
               {sendRefCurrency === "sol" && (
-                <div className="flex flex-wrap items-center gap-2 pt-1">
+                <div className="flex flex-wrap items-center gap-2 pt-0.5">
                   <span className="text-[0.65rem] uppercase tracking-wider text-zinc-600">
                     Quick
                   </span>
@@ -1410,7 +1316,7 @@ export function VaultCard() {
               )}
 
               {sendRefCurrency === "eur" && (
-                <div className="flex flex-wrap items-center gap-2 pt-1">
+                <div className="flex flex-wrap items-center gap-2 pt-0.5">
                   <span className="text-[0.65rem] uppercase tracking-wider text-zinc-600">
                     Quick
                   </span>
@@ -1433,7 +1339,7 @@ export function VaultCard() {
               )}
 
               {sendRefCurrency === "mxn" && (
-                <div className="flex flex-wrap items-center gap-2 pt-1">
+                <div className="flex flex-wrap items-center gap-2 pt-0.5">
                   <span className="text-[0.65rem] uppercase tracking-wider text-zinc-600">
                     Quick
                   </span>
@@ -1456,7 +1362,7 @@ export function VaultCard() {
               )}
             </motion.div>
 
-            <div className="flex flex-wrap items-center gap-4 border-t border-white/10 pt-5">
+            <div className="flex flex-wrap items-center gap-3 border-t border-white/10 pt-3">
               <button
                 type="button"
                 onClick={handleSendTo}
