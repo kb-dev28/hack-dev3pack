@@ -39,6 +39,11 @@ import {
 } from "../generated/vault";
 import { parseTransactionError } from "../lib/errors";
 import { ellipsify } from "../lib/explorer";
+import {
+  getProtocolTreasuryAddress,
+  protocolFeeLamports,
+  protocolSendFeePercentLabel,
+} from "../lib/protocol-fee";
 import { useSolanaClient } from "../lib/solana-client-context";
 import { useCluster } from "./cluster-context";
 
@@ -267,6 +272,8 @@ export function VaultCard() {
   const [vaultPanelOpen, setVaultPanelOpen] = useState(false);
   const [walletCopied, setWalletCopied] = useState(false);
 
+  const protocolTreasury = useMemo(() => getProtocolTreasuryAddress(), []);
+
   const selectVaultHubTab = useCallback((t: "deposit" | "withdraw") => {
     if (vaultHubTab === t) {
       setVaultPanelOpen((open) => !open);
@@ -424,6 +431,22 @@ export function VaultCard() {
         )
       : null;
 
+  const smartSendFeePreview = useMemo(() => {
+    if (
+      smartSend.kind !== "ok" ||
+      smartSend.lamports == null ||
+      !protocolTreasury ||
+      !vaultAddress
+    ) {
+      return null;
+    }
+    if (protocolTreasury === vaultAddress) return null;
+    const gross = smartSend.lamports;
+    const fee = protocolFeeLamports(gross);
+    if (fee <= 0n) return null;
+    return { gross, fee, net: gross - fee };
+  }, [smartSend, protocolTreasury, vaultAddress]);
+
   const smartSendDenomOptions =
     smartSendDenom === "crypto"
       ? ([
@@ -440,10 +463,10 @@ export function VaultCard() {
         ] as const);
 
   const smartSendCryptoBtnClass =
-    "min-h-[3rem] shrink-0 rounded-xl bg-gradient-to-r from-[#14F195] via-emerald-500 to-teal-600 px-5 py-2.5 text-center text-sm font-semibold tracking-tight text-neutral-950 shadow-lg shadow-emerald-900/35 outline-none ring-1 ring-white/15 transition hover:brightness-[1.05] disabled:pointer-events-none disabled:opacity-45";
+    "min-h-[3.25rem] shrink-0 rounded-xl bg-gradient-to-r from-[#14F195] via-emerald-500 to-teal-600 px-6 py-3 text-center text-base font-semibold tracking-tight text-neutral-950 shadow-lg shadow-emerald-900/35 outline-none ring-1 ring-white/15 transition hover:brightness-[1.05] disabled:pointer-events-none disabled:opacity-45";
 
   const smartSendFiatBtnClass =
-    "min-h-[3rem] shrink-0 rounded-xl bg-gradient-to-r from-sky-500 via-blue-700 to-[#173a94] px-5 py-2.5 text-center text-sm font-semibold tracking-tight text-white shadow-lg shadow-blue-950/45 outline-none ring-1 ring-white/20 transition hover:brightness-[1.06] disabled:pointer-events-none disabled:opacity-45";
+    "min-h-[3.25rem] shrink-0 rounded-xl bg-gradient-to-r from-sky-500 via-blue-700 to-[#173a94] px-6 py-3 text-center text-base font-semibold tracking-tight text-white shadow-lg shadow-blue-950/45 outline-none ring-1 ring-white/20 transition hover:brightness-[1.06] disabled:pointer-events-none disabled:opacity-45";
 
   const sendAmountStep =
     sendRefCurrency === "usd"
@@ -641,13 +664,41 @@ export function VaultCard() {
     }
 
     try {
-      const instruction = getSendToInstruction({
-        signer,
-        vault: vaultAddress,
-        recipient: recipientAddr,
-        amount: smartSend.lamports,
-      });
-      const signature = await send({ instructions: [instruction] });
+      const gross = smartSend.lamports;
+      const treasury =
+        protocolTreasury &&
+        vaultAddress &&
+        protocolTreasury !== vaultAddress
+          ? protocolTreasury
+          : null;
+      const feeLamports = treasury ? protocolFeeLamports(gross) : 0n;
+      const recipientLamports = gross - feeLamports;
+
+      if (recipientLamports <= 0n) {
+        toast.error("Amount too small after protocol fee.");
+        return;
+      }
+
+      const instructions = [
+        getSendToInstruction({
+          signer,
+          vault: vaultAddress,
+          recipient: recipientAddr,
+          amount: recipientLamports,
+        }),
+      ];
+      if (feeLamports > 0n && treasury) {
+        instructions.push(
+          getSendToInstruction({
+            signer,
+            vault: vaultAddress,
+            recipient: treasury,
+            amount: feeLamports,
+          }),
+        );
+      }
+
+      const signature = await send({ instructions });
       toast.success("Sent from vault!", {
         description: (
           <a
@@ -675,6 +726,7 @@ export function VaultCard() {
     getExplorerUrl,
     smartSend,
     vaultLamports,
+    protocolTreasury,
   ]);
 
   const handleCopyVaultAddress = useCallback(() => {
@@ -756,14 +808,14 @@ export function VaultCard() {
 
   return (
     <PremiumShell>
-      <section className="w-full space-y-2.5 p-4 sm:p-5">
+      <section className="w-full space-y-1.5 p-2 sm:p-3">
         {/* Header: title + LIVE PYTH top-right */}
-        <div className="flex w-full min-w-0 items-start justify-between gap-4 border-b border-white/10 pb-3">
+        <div className="flex w-full min-w-0 items-start justify-between gap-3 border-b border-white/10 pb-2">
           <div className="min-w-0">
-            <h1 className="text-5xl font-bold leading-[0.95] tracking-tight text-zinc-50 sm:text-6xl">
+            <h1 className="text-4xl font-bold leading-[0.95] tracking-tight text-zinc-50 sm:text-5xl">
               EverYield
             </h1>
-            <p className="mt-1 text-xl text-emerald-400/80">
+            <p className="mt-0.5 text-base leading-snug text-emerald-400/85 sm:text-lg">
               Grow perpetually, spend instantly.
             </p>
           </div>
@@ -844,19 +896,18 @@ export function VaultCard() {
         </div>
 
         {/* Long copy — band between header and control center */}
-        <div className="border-b border-white/10 bg-white/[0.02] py-3">
-          <p className="w-full text-sm leading-relaxed text-zinc-400 sm:text-[15px]">
-            The first high-yield vault on Solana that stays liquid for your
-            daily spending. Powered by Jito & Pyth Network.
+        <div className="border-b border-white/10 bg-white/[0.02] py-1.5">
+          <p className="w-full text-[11px] leading-tight text-zinc-500 sm:text-xs">
+            High-yield vault, liquid for spending — Jito & Pyth.
           </p>
         </div>
 
-        {/* Unified control: Wallet | Vault | Actions (baseline-aligned) */}
-        <div className="space-y-2 border-b border-white/10 pb-4 pt-4">
-          <div className="flex w-full min-w-0 flex-row flex-wrap items-end justify-between gap-4">
-            <div className="min-w-0 w-full max-w-[280px] shrink-0 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 sm:w-[min(280px,34%)] sm:max-w-none">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs font-medium text-zinc-400">
+        {/* Unified control: Wallet | Vault | Actions (titles + Deposit/Withdraw top-aligned) */}
+        <div className="space-y-1 border-b border-white/10 pb-1.5 pt-1.5">
+          <div className="flex w-full min-w-0 flex-row flex-wrap items-start justify-between gap-2">
+            <div className="min-w-0 w-full max-w-[240px] shrink-0 rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-1.5 sm:w-[min(240px,34%)] sm:max-w-none">
+              <div className="flex min-h-[1.75rem] flex-wrap items-center justify-between gap-1.5">
+                <span className="text-[11px] font-semibold tracking-tight text-zinc-200 sm:text-xs">
                   Wallet balance
                 </span>
                 {cluster !== "mainnet" && (
@@ -873,7 +924,7 @@ export function VaultCard() {
                 <button
                   type="button"
                   onClick={handleCopyWalletAddress}
-                  className="mt-1 flex max-w-full cursor-pointer items-center gap-1.5 truncate font-mono text-[10px] text-zinc-400 transition hover:text-zinc-200 sm:text-[11px]"
+                  className="mt-0.5 flex max-w-full cursor-pointer items-center gap-1.5 truncate font-mono text-[10px] text-zinc-400 transition hover:text-zinc-200"
                 >
                   {ellipsify(walletAddress, 4)}
                   <svg
@@ -904,29 +955,31 @@ export function VaultCard() {
                   </svg>
                 </button>
               )}
-              <p className="mt-2 font-mono text-2xl font-bold tabular-nums tracking-tight text-zinc-50 sm:text-3xl">
+              <p className="mt-1 font-mono text-lg font-bold tabular-nums tracking-tight text-zinc-50 sm:text-xl">
                 {walletLamports != null
                   ? lamportsToSolString(walletLamports)
                   : "\u2014"}
-                <span className="ml-1 text-sm font-normal text-zinc-500">
+                <span className="ml-1 text-[10px] font-normal text-zinc-500 sm:text-xs">
                   SOL
                 </span>
               </p>
             </div>
 
-            <div className="flex min-w-0 flex-1 flex-col items-center justify-end px-1 text-center sm:px-3">
-              <span className="text-xs font-medium text-zinc-500">
-                Vault balance
-              </span>
+            <div className="flex min-w-0 flex-1 flex-col items-center px-0.5 pt-0 text-center sm:px-1.5">
+              <div className="flex min-h-[1.75rem] w-full items-center justify-center">
+                <span className="text-[11px] font-semibold tracking-tight text-zinc-200 sm:text-xs">
+                  Vault balance
+                </span>
+              </div>
               <motion.div
-                className="mt-1 font-mono tabular-nums text-3xl font-semibold leading-none tracking-tight text-zinc-50 sm:text-4xl"
+                className="mt-0 font-mono tabular-nums text-xl font-semibold leading-none tracking-tight text-zinc-50 sm:text-2xl"
                 layout
               >
                 <span className="select-none">{parts.intPart}</span>
                 <span className="text-zinc-600">.</span>
                 <span className="text-zinc-300">{parts.fracA}</span>
                 <motion.span
-                  className="inline-block min-w-[4.5ch] text-zinc-200"
+                  className="inline-block min-w-[3.5ch] text-zinc-200"
                   key={parts.fracB}
                   initial={{ y: 3, opacity: 0.5 }}
                   animate={{ y: 0, opacity: 1 }}
@@ -938,14 +991,14 @@ export function VaultCard() {
                 >
                   {parts.fracB}
                 </motion.span>
-                <span className="ml-1 text-sm font-medium text-zinc-500">
+                <span className="ml-0.5 text-[10px] font-medium text-zinc-500 sm:text-xs">
                   SOL
                 </span>
               </motion.div>
-              <p className="mt-0.5 text-sm leading-tight text-zinc-300">
-                Balance held in JitoSOL
+              <p className="mt-0 text-[10px] leading-tight text-zinc-500 sm:text-[11px]">
+                JitoSOL
               </p>
-              <p className="text-xs font-medium tabular-nums leading-tight text-zinc-400">
+              <p className="text-[10px] font-medium tabular-nums leading-tight text-zinc-600">
                 {heroUsdApprox != null
                   ? `≈ ${formatUsdApproxHero(heroUsdApprox)}`
                   : pythQuote.isLoading
@@ -954,11 +1007,12 @@ export function VaultCard() {
               </p>
             </div>
 
-            <div className="relative inline-flex shrink-0 rounded-md border border-white/12 bg-black/45 p-px self-end">
+            <div className="flex w-full max-w-[240px] shrink-0 flex-col gap-0.5 self-start sm:w-max">
+              <div className="relative inline-flex min-h-[1.75rem] shrink-0 items-center rounded-md border border-white/12 bg-black/45 p-px self-start">
               <button
                 type="button"
                 onClick={() => selectVaultHubTab("deposit")}
-                className={`relative min-w-[4rem] rounded-[5px] px-1.5 py-0.5 text-[10px] font-semibold transition sm:min-w-[4.25rem] sm:px-2 sm:py-1 sm:text-[11px] ${
+                className={`relative min-w-[3.75rem] rounded-[5px] px-1.5 py-1 text-[10px] font-semibold transition sm:min-w-[4rem] sm:px-2 sm:py-1.5 sm:text-[11px] ${
                   vaultHubTab === "deposit"
                     ? "text-zinc-50"
                     : "text-zinc-500 hover:text-zinc-300"
@@ -983,7 +1037,7 @@ export function VaultCard() {
               <button
                 type="button"
                 onClick={() => selectVaultHubTab("withdraw")}
-                className={`relative min-w-[4.25rem] rounded-[5px] px-1.5 py-0.5 text-[10px] font-semibold transition sm:min-w-[4.5rem] sm:px-2 sm:py-1 sm:text-[11px] ${
+                className={`relative min-w-[4rem] rounded-[5px] px-1.5 py-1 text-[10px] font-semibold transition sm:min-w-[4.25rem] sm:px-2 sm:py-1.5 sm:text-[11px] ${
                   vaultHubTab === "withdraw"
                     ? "text-zinc-50"
                     : "text-zinc-500 hover:text-zinc-300"
@@ -1006,19 +1060,18 @@ export function VaultCard() {
                 </span>
               </button>
             </div>
-          </div>
 
           <AnimatePresence initial={false}>
             {vaultPanelOpen && (
               <motion.div
                 key="vault-action-panel"
-                initial={{ opacity: 0, y: -6 }}
+                initial={{ opacity: 0, y: -4 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -6 }}
+                exit={{ opacity: 0, y: -4 }}
                 transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-                className="ml-auto w-full max-w-[280px] overflow-hidden pt-1"
+                className="w-full overflow-hidden"
               >
-                <div className="w-full max-w-[280px] rounded-lg border border-white/10 bg-neutral-900/55 px-3 py-2 backdrop-blur-sm">
+                <div className="w-full rounded-lg border border-white/10 bg-neutral-900/55 px-2 py-1.5 backdrop-blur-sm">
                       <AnimatePresence mode="wait">
                         {vaultHubTab === "deposit" ? (
                           <motion.div
@@ -1027,17 +1080,18 @@ export function VaultCard() {
                             animate={{ opacity: 1, y: 0 }}
                             exit={{ opacity: 0, y: -4 }}
                             transition={{ duration: 0.18 }}
-                            className="flex flex-col gap-2"
+                            className="flex min-w-0 flex-row flex-wrap items-center gap-1.5"
                           >
                             <input
                               type="number"
                               min="0"
                               step="0.01"
                               placeholder="Amount (SOL)"
+                              aria-label="Deposit amount in SOL"
                               value={amount}
                               onChange={(e) => setAmount(e.target.value)}
                               disabled={isSending}
-                              className="w-full max-w-[250px] rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-300 focus:border-[#14F195]/40 focus:ring-1 focus:ring-[#14F195]/25 disabled:pointer-events-none disabled:opacity-50"
+                              className="min-w-0 flex-1 basis-[6rem] rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-xs text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-[#14F195]/40 focus:ring-1 focus:ring-[#14F195]/25 disabled:pointer-events-none disabled:opacity-50"
                             />
                             <button
                               type="button"
@@ -1047,7 +1101,7 @@ export function VaultCard() {
                                 !amount ||
                                 parseFloat(amount) <= 0
                               }
-                              className="self-start rounded-lg border border-white/15 bg-transparent px-4 py-2 text-xs font-semibold text-zinc-100 transition hover:border-[#14F195]/40 hover:bg-[#14F195]/8 disabled:pointer-events-none disabled:opacity-45"
+                              className="shrink-0 rounded-md border border-white/15 bg-white/[0.06] px-2.5 py-1.5 text-[11px] font-semibold text-zinc-100 transition hover:border-[#14F195]/45 hover:bg-[#14F195]/12 disabled:pointer-events-none disabled:opacity-45"
                             >
                               {isSending ? "…" : "Deposit"}
                             </button>
@@ -1059,44 +1113,51 @@ export function VaultCard() {
                             animate={{ opacity: 1, y: 0 }}
                             exit={{ opacity: 0, y: -4 }}
                             transition={{ duration: 0.18 }}
-                            className="space-y-2"
+                            className="flex min-w-0 flex-row flex-wrap items-center gap-1.5"
                           >
-                            <div className="flex flex-col gap-2">
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.001"
-                                placeholder="To wallet (SOL)"
-                                value={partialAmount}
-                                onChange={(e) =>
-                                  setPartialAmount(e.target.value)
-                                }
-                                disabled={isSending}
-                                className="w-full max-w-[250px] rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-300 focus:border-white/25 focus:ring-1 focus:ring-white/10 disabled:pointer-events-none disabled:opacity-50"
-                              />
-                              <button
-                                type="button"
-                                onClick={handleWithdrawPartial}
-                                disabled={
-                                  isSending ||
-                                  !partialAmount ||
-                                  parseFloat(partialAmount) <= 0 ||
-                                  !vaultLamports
-                                }
-                                className="self-start rounded-lg border border-white/15 bg-transparent px-4 py-2 text-xs font-semibold text-zinc-100 transition hover:border-white/30 hover:bg-white/[0.05] disabled:pointer-events-none disabled:opacity-45"
-                              >
-                                {isSending ? "…" : "Partial"}
-                              </button>
-                            </div>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.001"
+                              placeholder="Amount"
+                              aria-label="Partial withdraw amount in SOL to wallet"
+                              value={partialAmount}
+                              onChange={(e) =>
+                                setPartialAmount(e.target.value)
+                              }
+                              disabled={isSending}
+                              className="min-w-0 flex-1 basis-[5rem] rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-xs text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-white/25 focus:ring-1 focus:ring-white/10 disabled:pointer-events-none disabled:opacity-50"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleWithdrawPartial}
+                              disabled={
+                                isSending ||
+                                !partialAmount ||
+                                parseFloat(partialAmount) <= 0 ||
+                                !vaultLamports
+                              }
+                              className="shrink-0 rounded-md border border-white/15 bg-white/[0.06] px-2 py-1.5 text-[11px] font-semibold text-zinc-100 transition hover:border-white/30 hover:bg-white/[0.08] disabled:pointer-events-none disabled:opacity-45"
+                            >
+                              {isSending ? "…" : "Partial"}
+                            </button>
                             <button
                               type="button"
                               onClick={handleWithdraw}
                               disabled={isSending || !vaultLamports}
-                              className="w-full max-w-[250px] rounded-lg border border-white/18 bg-transparent py-1.5 text-[11px] font-medium text-zinc-400 transition hover:border-white/28 hover:bg-white/[0.04] hover:text-zinc-200 disabled:pointer-events-none disabled:opacity-45"
+                              title="Withdraw all SOL and close the vault"
+                              className="flex shrink-0 flex-col items-center justify-center rounded-md border border-white/18 bg-white/[0.04] px-2 py-1 text-center text-[10px] font-semibold leading-tight text-zinc-300 transition hover:border-white/28 hover:bg-white/[0.07] hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-45"
                             >
-                              {isSending
-                                ? "…"
-                                : "Withdraw all & close vault"}
+                              {isSending ? (
+                                "…"
+                              ) : (
+                                <>
+                                  <span>Total</span>
+                                  <span className="text-[9px] font-normal text-zinc-500">
+                                    close
+                                  </span>
+                                </>
+                              )}
                             </button>
                           </motion.div>
                         )}
@@ -1105,10 +1166,12 @@ export function VaultCard() {
               </motion.div>
             )}
           </AnimatePresence>
+            </div>
+          </div>
         </div>
 
         {(pythQuote.isLoading || pythQuote.error) && (
-          <div className="border-t border-white/10 pt-2 text-[10px] text-zinc-500">
+          <div className="border-t border-white/10 pt-1.5 text-[10px] text-zinc-500">
             {pythQuote.isLoading && !pythQuote.data && (
               <p>Loading Hermes price feeds…</p>
             )}
@@ -1122,10 +1185,10 @@ export function VaultCard() {
           </div>
         )}
 
-        <div className="space-y-4 border-t border-white/10 pt-4">
-          <div className="space-y-5 rounded-2xl border border-white/15 bg-white/[0.045] p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.04)_inset] sm:p-6">
-            <div className="flex items-center gap-2.5">
-              <p className="text-base font-semibold tracking-tight text-zinc-100 sm:text-lg">
+        <div className="space-y-5 border-t border-white/10 pt-5 sm:pt-6">
+          <div className="space-y-6 rounded-2xl border border-white/15 bg-white/[0.055] p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.05)_inset] sm:p-8">
+            <div className="flex items-center gap-3">
+              <p className="text-lg font-semibold tracking-tight text-zinc-50 sm:text-xl">
                 Smart send
               </p>
               <button
@@ -1133,7 +1196,7 @@ export function VaultCard() {
                 className="group relative inline-flex shrink-0 rounded p-0.5 text-zinc-500 outline-none transition hover:text-zinc-300 focus-visible:ring-2 focus-visible:ring-[#14F195]/40"
                 aria-label="How Smart send works"
               >
-                <Info className="h-3.5 w-3.5" strokeWidth={2.25} />
+                <Info className="h-4 w-4 sm:h-[1.125rem] sm:w-[1.125rem]" strokeWidth={2.25} />
                 <span
                   role="tooltip"
                   className="pointer-events-none invisible absolute left-1/2 top-full z-50 mt-2 w-[min(22rem,calc(100vw-2.5rem))] -translate-x-1/2 rounded-xl border border-white/12 bg-neutral-950/95 px-3.5 py-2.5 text-left text-[11px] font-normal normal-case leading-relaxed tracking-normal text-zinc-300 shadow-[0_12px_40px_-8px_rgba(0,0,0,0.65)] backdrop-blur-md opacity-0 transition-[opacity,visibility] duration-150 group-hover:visible group-hover:opacity-100 group-focus-visible:visible group-focus-visible:opacity-100"
@@ -1152,14 +1215,14 @@ export function VaultCard() {
               value={sendRecipient}
               onChange={(e) => setSendRecipient(e.target.value)}
               disabled={isSending}
-              className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3.5 font-mono text-sm text-zinc-300 outline-none transition placeholder:text-zinc-300 focus:border-white/25 focus:ring-1 focus:ring-violet-500/25 disabled:pointer-events-none disabled:opacity-50"
+              className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-4 font-mono text-base text-zinc-200 outline-none transition placeholder:text-zinc-400 focus:border-white/25 focus:ring-2 focus:ring-violet-500/25 disabled:pointer-events-none disabled:opacity-50 sm:px-5 sm:py-[1.125rem]"
             />
 
             <motion.div
               layout
-              className="space-y-3 text-[0.95rem] leading-relaxed"
+              className="space-y-4 text-base leading-relaxed text-zinc-300"
             >
-              <div className="flex flex-wrap items-center gap-1.5">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   disabled={isSending}
@@ -1170,7 +1233,7 @@ export function VaultCard() {
                     );
                     setSendAmount("");
                   }}
-                  className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide transition ${
+                  className={`rounded-full px-4 py-1.5 text-xs font-semibold uppercase tracking-wide transition ${
                     smartSendDenom === "crypto"
                       ? "bg-[#14F195]/20 text-[#14F195] ring-1 ring-[#14F195]/35"
                       : "bg-black/25 text-zinc-500 hover:text-zinc-300"
@@ -1188,7 +1251,7 @@ export function VaultCard() {
                     );
                     setSendAmount("");
                   }}
-                  className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide transition ${
+                  className={`rounded-full px-4 py-1.5 text-xs font-semibold uppercase tracking-wide transition ${
                     smartSendDenom === "fiat"
                       ? "bg-blue-500/25 text-blue-200 ring-1 ring-blue-400/40"
                       : "bg-black/25 text-zinc-500 hover:text-zinc-300"
@@ -1198,10 +1261,10 @@ export function VaultCard() {
                 </button>
               </div>
 
-              <div className="flex flex-wrap items-end gap-x-2 gap-y-2 text-zinc-400">
-                <span className="shrink-0 text-zinc-500">I want to send</span>
+              <div className="flex flex-wrap items-end gap-x-2.5 gap-y-2 text-zinc-400">
+                <span className="shrink-0 text-zinc-400">I want to send</span>
                 <span
-                  className="pb-px text-lg tabular-nums"
+                  className="pb-0.5 text-xl tabular-nums sm:text-2xl"
                   style={{ color: SOLANA_ACCENT }}
                   aria-hidden
                 >
@@ -1216,10 +1279,10 @@ export function VaultCard() {
                   value={sendAmount}
                   onChange={(e) => setSendAmount(e.target.value)}
                   disabled={isSending}
-                  className="w-[7.25rem] border-0 border-b border-zinc-600 bg-transparent pb-px text-lg font-semibold tabular-nums text-zinc-100 outline-none transition placeholder:text-zinc-300 focus:border-[#14F195]/70 disabled:opacity-50 sm:w-36 md:w-44"
+                  className="w-[7.5rem] border-0 border-b border-zinc-600 bg-transparent pb-0.5 text-xl font-semibold tabular-nums text-zinc-100 outline-none transition placeholder:text-zinc-400 focus:border-[#14F195]/70 disabled:opacity-50 sm:w-40 sm:text-2xl md:w-48"
                 />
-                <span className="pb-px text-zinc-500">as</span>
-                <label className="relative inline-flex items-center pb-px">
+                <span className="pb-0.5 text-zinc-400">as</span>
+                <label className="relative inline-flex items-center pb-0.5">
                   <select
                     value={sendRefCurrency}
                     aria-label="Reference currency"
@@ -1228,7 +1291,7 @@ export function VaultCard() {
                       setSendAmount("");
                     }}
                     disabled={isSending}
-                    className="min-h-12 min-w-[13.5rem] max-w-[min(100vw-2rem,22rem)] cursor-pointer appearance-none rounded-xl border border-white/15 bg-black/35 py-3 pl-3 pr-10 text-sm font-medium text-zinc-100 outline-none transition hover:bg-black/45 focus-visible:ring-1 focus-visible:ring-violet-500/40 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="min-h-14 min-w-[14rem] max-w-[min(100vw-2rem,24rem)] cursor-pointer appearance-none rounded-xl border border-white/15 bg-black/35 py-3.5 pl-3.5 pr-10 text-base font-medium text-zinc-100 outline-none transition hover:bg-black/45 focus-visible:ring-2 focus-visible:ring-violet-500/40 disabled:cursor-not-allowed disabled:opacity-50 sm:min-w-[15rem]"
                   >
                     {smartSendDenomOptions.map(([value, label]) => (
                       <option key={value} value={value}>
@@ -1237,7 +1300,7 @@ export function VaultCard() {
                     ))}
                   </select>
                   <ChevronDown
-                    className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500"
+                    className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400 sm:h-[1.125rem] sm:w-[1.125rem]"
                     aria-hidden
                   />
                 </label>
@@ -1250,15 +1313,39 @@ export function VaultCard() {
                 </p>
               )}
 
-              <p className="min-h-[1.375rem] text-sm text-zinc-400">
+              <p className="min-h-[1.5rem] text-base leading-snug text-zinc-400">
                 {smartSend.kind === "ok" && smartSend.lamports != null ? (
-                  <>
-                    The recipient will receive exactly{" "}
-                    <span className="font-mono text-base font-medium text-zinc-100">
-                      {formatExecutedSol(smartSend.lamports)}
-                    </span>{" "}
-                    SOL.
-                  </>
+                  smartSendFeePreview ? (
+                    <>
+                      <span className="block">
+                        Total debited from vault:{" "}
+                        <span className="font-mono font-medium text-zinc-200">
+                          {formatExecutedSol(smartSendFeePreview.gross)}
+                        </span>{" "}
+                        SOL.
+                      </span>
+                      <span className="mt-1.5 block">
+                        Recipient receives{" "}
+                        <span className="font-mono text-lg font-medium text-zinc-100">
+                          {formatExecutedSol(sol(smartSendFeePreview.net))}
+                        </span>{" "}
+                        SOL; protocol fee (
+                        {protocolSendFeePercentLabel()}):{" "}
+                        <span className="font-mono font-medium text-zinc-300">
+                          {formatExecutedSol(sol(smartSendFeePreview.fee))}
+                        </span>{" "}
+                        SOL.
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      The recipient will receive exactly{" "}
+                      <span className="font-mono text-lg font-medium text-zinc-100">
+                        {formatExecutedSol(smartSend.lamports)}
+                      </span>{" "}
+                      SOL.
+                    </>
+                  )
                 ) : smartSend.kind === "no_pyth" ? (
                   <span className="text-amber-300/95">
                     Load Pyth Hermes—or pick SOL as the reference (works
@@ -1291,7 +1378,7 @@ export function VaultCard() {
                         setSendRefCurrency("usd");
                         setSendAmount(String(usd));
                       }}
-                      className="rounded-full border border-white/10 bg-black/35 px-3 py-1 text-xs font-semibold tabular-nums text-zinc-300 transition hover:border-blue-400/35 hover:bg-blue-500/10 hover:text-blue-100 disabled:opacity-50"
+                      className="rounded-full border border-white/10 bg-black/35 px-3.5 py-1.5 text-sm font-semibold tabular-nums text-zinc-300 transition hover:border-blue-400/35 hover:bg-blue-500/10 hover:text-blue-100 disabled:opacity-50"
                     >
                       ${usd}
                     </button>
@@ -1314,7 +1401,7 @@ export function VaultCard() {
                         setSendRefCurrency("sol");
                         setSendAmount(String(s));
                       }}
-                      className="rounded-full border border-white/10 bg-black/35 px-3 py-1 text-xs font-semibold tabular-nums text-zinc-300 transition hover:border-[#14F195]/35 hover:bg-[#14F195]/10 hover:text-[#14F195] disabled:opacity-50"
+                      className="rounded-full border border-white/10 bg-black/35 px-3.5 py-1.5 text-sm font-semibold tabular-nums text-zinc-300 transition hover:border-[#14F195]/35 hover:bg-[#14F195]/10 hover:text-[#14F195] disabled:opacity-50"
                     >
                       {s}&nbsp;SOL
                     </button>
@@ -1337,7 +1424,7 @@ export function VaultCard() {
                         setSendRefCurrency("eur");
                         setSendAmount(String(e));
                       }}
-                      className="rounded-full border border-white/10 bg-black/35 px-3 py-1 text-xs font-semibold tabular-nums text-zinc-300 transition hover:border-emerald-400/35 hover:bg-emerald-500/10 hover:text-emerald-300 disabled:opacity-50"
+                      className="rounded-full border border-white/10 bg-black/35 px-3.5 py-1.5 text-sm font-semibold tabular-nums text-zinc-300 transition hover:border-emerald-400/35 hover:bg-emerald-500/10 hover:text-emerald-300 disabled:opacity-50"
                     >
                       {formatEur(e)}
                     </button>
@@ -1360,7 +1447,7 @@ export function VaultCard() {
                         setSendRefCurrency("mxn");
                         setSendAmount(String(pesos));
                       }}
-                      className="rounded-full border border-white/10 bg-black/35 px-3 py-1 text-xs font-semibold tabular-nums text-zinc-300 transition hover:border-teal-400/35 hover:bg-teal-500/10 hover:text-teal-200 disabled:opacity-50"
+                      className="rounded-full border border-white/10 bg-black/35 px-3.5 py-1.5 text-sm font-semibold tabular-nums text-zinc-300 transition hover:border-teal-400/35 hover:bg-teal-500/10 hover:text-teal-200 disabled:opacity-50"
                     >
                       {pesos}&nbsp;MXN
                     </button>
@@ -1369,7 +1456,7 @@ export function VaultCard() {
               )}
             </motion.div>
 
-            <div className="flex flex-wrap items-center gap-3 border-t border-white/10 pt-4">
+            <div className="flex flex-wrap items-center gap-4 border-t border-white/10 pt-5">
               <button
                 type="button"
                 onClick={handleSendTo}
@@ -1393,7 +1480,7 @@ export function VaultCard() {
                 {isSending ? "Confirming…" : (sendCtaLabel ?? "Send")}
               </button>
 
-              <div className="min-w-0 flex-1 text-xs text-zinc-500">
+              <div className="min-w-0 flex-1 text-sm text-zinc-400">
                 {smartSend.kind === "ok" &&
                   smartSend.lamports != null &&
                   vaultLamports != null &&
