@@ -5,10 +5,10 @@ import { useEffect, useRef, useState } from "react";
 const SECONDS_PER_YEAR = 365.25 * 24 * 60 * 60;
 
 /** ~JitoSOL-like APR for UI-only accrual (not on-chain stake). */
-export const YIELDLINK_SIMULATED_APR = 0.08;
+export const EVERYIELD_SIMULATED_APR = 0.08;
 
 function t0StorageKey(vaultPda: string): string {
-  return `yieldlink_mvp_yield_t0_${vaultPda}`;
+  return `everyield_mvp_yield_t0_${vaultPda}`;
 }
 
 export type SimulatedJitoYield = {
@@ -35,7 +35,7 @@ export function useSimulatedJitoYield({
   vaultLamports,
   jitosolPerSol,
   jitosolUsd,
-  apr = YIELDLINK_SIMULATED_APR,
+  apr = EVERYIELD_SIMULATED_APR,
   hasPyth,
 }: {
   vaultPda: string | null | undefined;

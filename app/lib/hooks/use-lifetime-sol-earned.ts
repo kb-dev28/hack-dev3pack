@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 function storageKey(walletKey: string): string {
-  return `yieldlink_lifetime_sol_earned_v1_${walletKey}`;
+  return `everyield_lifetime_sol_earned_v1_${walletKey}`;
 }
 
 /**

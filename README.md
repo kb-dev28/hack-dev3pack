@@ -1,96 +1,130 @@
 # EverYield (`hack-dev3pack`)
 
-**EverYield** is a hackathon-style MVP on Solana: a **non-custodial PDA vault** (native SOL lamports) plus **Smart Send** — pay a recipient an amount expressed in **crypto or fiat**, converted with **Pyth Hermes** (mainnet spot prices) while funds stay in the vault narrative until you send. Built on Next.js, `@solana/kit`, and an **Anchor** vault program.
+**Project name:** **EverYield**  
+**Description:** Non-custodial Solana **PDA vault** (native SOL) with **Smart Send**: pay a recipient using an amount in **crypto or fiat**, converted off-chain with **Pyth Hermes** (mainnet spot prices). Frontend: Next.js + `@solana/kit` + wallet-standard. On-chain: **Anchor** (Rust).
 
-> Naming note: internal planning docs still say *YieldLink*; the shipped UI and header brand are **EverYield**.
+---
 
-## Getting started
+## Live demo & repository
+
+| | Link |
+| --- | --- |
+| **Live demo (Vercel)** | [https://hack-dev3pack.vercel.app/](https://hack-dev3pack.vercel.app/) |
+| **Demo video** | *Add your public video URL here (keep under ~3 minutes per track rules).* |
+| **Public GitHub repo** | [github.com/kb-dev28/hack-dev3pack](https://github.com/kb-dev28/hack-dev3pack) |
+
+### For judges (no install)
+
+Open the **live demo** link, set the wallet to **Devnet** (same as the app header), connect, and use the vault + Smart Send. **No** clone, **no** Anchor, and **no** deploy required on your machine.
+
+### For developers cloning this repo
+
+Use this when someone wants to **run or modify** the app locally (hackathon “README + setup instructions”):
+
+```shell
+git clone https://github.com/kb-dev28/hack-dev3pack.git
+cd hack-dev3pack
+npm install
+npm run dev
+```
+
+The Codama client under `app/generated/vault/` is **committed**, so `npm run dev` is enough for a local UI that talks to **devnet** with the program ID in this README.
+
+Run **`npm run setup`** (needs [Rust](https://rustup.rs/) + [Anchor](https://www.anchor-lang.com/docs/installation) + Solana CLI) only after you **change the Anchor program or `declare_id!`**, so the generated client matches your build.
+
+Official template bootstrap (optional):
 
 ```shell
 npx -y create-solana-dapp@latest -t solana-foundation/templates/kit/hack-dev3pack
 ```
 
-```shell
-npm install
-npm run setup   # Builds the Anchor program and generates the TypeScript client (Codama)
-npm run dev
-```
+**Phantom / Wallet Standard:** CAIP-2 chain ids (e.g. devnet `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1`), not `solana:devnet`. For localnet from the browser, see `NEXT_PUBLIC_LOCALNET_WALLET_CHAIN` in [`.env.example`](./.env.example).
 
-Open [http://localhost:3000](http://localhost:3000), connect your wallet, and use the vault + Smart Send.
+---
 
-**Phantom / Wallet Standard:** the app uses CAIP-2 chain ids (e.g. devnet `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1`), not `solana:devnet`. Pick the **same cluster** in the wallet as in the app header. For localnet, set `NEXT_PUBLIC_LOCALNET_WALLET_CHAIN` to `solana:` + the first 32 characters of `solana genesis-hash -u http://127.0.0.1:8899` if signing fails.
+## Solana program — contract address (devnet)
 
-## Devnet program (contract address)
+**Requirement:** unique program in **Rust** (Anchor), deployed to **devnet** — address is stated here for judges and tooling.
 
-| Item        | Value |
-| ----------- | ----- |
+| Item | Value |
+| --- | --- |
 | **Program ID** | `AhG1mX9GuvsiZSvoHE4yjro92xbP5Rswx87NnusoQPrf` |
-| **Cluster**    | Devnet (default in UI) |
-| **Explorer**   | [Solana Explorer — program](https://explorer.solana.com/address/AhG1mX9GuvsiZSvoHE4yjro92xbP5Rswx87NnusoQPrf?cluster=devnet) |
+| **Cluster** | Devnet |
+| **Source** | `anchor/programs/vault/src/lib.rs` (`declare_id!` matches the table above) |
+| **Explorer** | [Program on Solana Explorer](https://explorer.solana.com/address/AhG1mX9GuvsiZSvoHE4yjro92xbP5Rswx87NnusoQPrf?cluster=devnet) |
 
-If you deploy your own program, run `anchor keys sync`, rebuild, deploy, then `npm run setup` so the generated client matches your ID.
+If you deploy a **new** program: `anchor keys sync` → rebuild → deploy → `npm run setup` so `app/generated/vault/` matches your ID.
 
-## What’s in the MVP (UI + program)
+---
 
-- **Site header** — EverYield + tagline, help (?) with product tooltip, theme + cluster + wallet; Pyth ratio still appears inside the help tooltip when Hermes data is loaded.
-- **Wallet card** — balance, truncated **address + copy** on the top row; on non-mainnet, a compact **devnet airdrop** action under the SOL line.
-- **Vault** — deposit; withdraw **partial** or **total** (close); balance display framed as **JitoSOL** with SOL headline + optional **simulated** yield tick driven by Pyth ratio (`useSimulatedJitoYield`).
-- **Smart Send** — recipient + amount in a chosen reference (default **ETH** in crypto mode to avoid redundant SOL); Hermes-backed conversion; optional **protocol fee** (see env below); validation UX (e.g. highlight recipient when amount is set but address is empty).
-- **Toasts** with explorer links; readable errors for common Solana / program failures.
-- **Codama-generated** type-safe client under `app/generated/vault/`.
-- **Tailwind CSS v4**, light/dark.
+## Solana track checklist (quick reference)
 
-Instructions on-chain today: **deposit**, **withdraw** (full to signer + close), **withdraw_partial**, **send_to** (owner-signed transfer from vault PDA to any recipient, respecting rent).
+- [x] **Project name + short description** — top of this README.  
+- [x] **Unique Solana program (Rust)** — Anchor vault in `anchor/programs/vault/`.  
+- [x] **Contract address on devnet** — table above.  
+- [x] **Public GitHub + README + setup** — clone + `npm install` + `npm run dev`; `npm run setup` when changing on-chain code.  
+- [ ] **Demo video** — add URL in the table when ready.  
+- **Bonus:** `@solana/kit`, wallet-standard, Codama client, Anchor + LiteSVM tests.
 
-## Pyth (this repo)
+---
 
-- The **program does not** read Pyth accounts; pricing is **off-chain** via `@pythnetwork/hermes-client` (`getLatestPriceUpdates`, `parsed: true`) against `https://hermes.pyth.network` for feeds configured in `app/lib/pyth/constants.ts` (e.g. SOL/USD, JITOSOL/USD).
-- Hook: `app/lib/hooks/use-pyth-jitosol-quote.ts` (SWR, ~2s refresh).
-- Optional env: `NEXT_PUBLIC_PYTH_HERMES_URL` to override the Hermes base URL.
-- `@pythnetwork/pyth-solana-receiver` is a dependency for a possible future **on-chain** Pull Oracle path; the current MVP does not post price updates inside the program.
+## Environment variables (`.env`)
 
-## Configuration (`.env`)
-
-See [`.env.example`](./.env.example). Notable:
+**Vercel:** no `.env` required for defaults (Hermes URL in `app/lib/pyth/constants.ts`; protocol fee off until you set a treasury).
 
 | Variable | Purpose |
-| -------- | ------- |
-| `NEXT_PUBLIC_PROTOCOL_TREASURY` | Optional treasury pubkey; if set, Smart Send splits a **tiny fee** (see `app/lib/protocol-fee.ts`) from the gross lamports in the same transaction. |
-| `NEXT_PUBLIC_PYTH_HERMES_URL` | Optional Hermes endpoint override. |
+| --- | --- |
+| `NEXT_PUBLIC_PYTH_HERMES_URL` | Optional Hermes base URL override. |
+| `NEXT_PUBLIC_PROTOCOL_TREASURY` | Optional Smart Send fee recipient (`app/lib/protocol-fee.ts`). |
+| `NEXT_PUBLIC_LOCALNET_WALLET_CHAIN` | Only if you use **localnet** from the browser. |
 
-Never commit real private keys or keypair JSON.
+Details: [`.env.example`](./.env.example). Never commit private keys or deploy keypairs.
+
+---
+
+## What’s in the MVP
+
+- **Header** — EverYield, tagline, help tooltip (incl. Pyth ratio when loaded), theme, cluster, wallet.  
+- **Wallet** — balance, address + copy; devnet airdrop helper when not on mainnet.  
+- **Vault** — deposit; partial / total withdraw; JitoSOL-framed balance + simulated yield tick (`useSimulatedJitoYield`).  
+- **Smart Send** — recipient + amount (default ref **ETH** in crypto mode); Hermes conversion; optional fee; recipient highlight when amount set but address empty.  
+- **Instructions:** `deposit`, `withdraw`, `withdraw_partial`, `send_to`.  
+- **Pyth** — Hermes in the frontend only; the program does **not** read Pyth accounts (`app/lib/pyth/`, `use-pyth-jitosol-quote.ts`).
+
+---
 
 ## Stack
 
-| Layer          | Technology |
-| -------------- | ---------- |
-| Frontend       | Next.js 16, React 19, TypeScript |
-| Styling        | Tailwind CSS v4 |
-| Solana client  | `@solana/kit`, wallet-standard |
-| Program client | Codama-generated from Anchor IDL |
-| Program        | Anchor (Rust) |
-| Prices (MVP)   | Pyth Hermes (`@pythnetwork/hermes-client`), SWR |
+| Layer | Technology |
+| --- | --- |
+| Frontend | Next.js 16, React 19, TypeScript |
+| Styling | Tailwind CSS v4 |
+| Solana client | `@solana/kit`, wallet-standard |
+| Program client | Codama → `app/generated/vault/` |
+| Program | Anchor (Rust) |
+| Prices | `@pythnetwork/hermes-client`, SWR |
+
+---
 
 ## Project structure (high level)
 
 ```
 app/
-  components/          # UI: vault-card, site-chrome-header, wallet-button, cluster-select, …
-  generated/vault/     # Codama client
-  lib/
-    pyth/              # Hermes fetch + send conversion helpers
-    hooks/             # balances, send tx, Pyth quote, simulated yield, …
-    protocol-fee.ts    # Optional Smart Send fee (ppm)
+  components/       # vault-card, site-chrome-header, wallet-button, cluster-select, …
+  generated/vault/  # Codama client (commit this for Vercel)
+  lib/              # pyth/, hooks/, protocol-fee.ts, wallet/, …
 anchor/
-  programs/vault/      # Anchor program + LiteSVM tests
+  programs/vault/   # Anchor program + LiteSVM tests
 codama.json
 ```
 
-## Local development (local validator)
+---
 
-1. `solana-test-validator`
-2. `solana config set --url localhost` → `cd anchor && anchor build && anchor deploy` → `cd .. && npm run codama:js`
-3. Select **localnet** in the app header.
+## Local validator
+
+1. `solana-test-validator`  
+2. `solana config set --url localhost` → `cd anchor && anchor build && anchor deploy` → `cd .. && npm run codama:js`  
+3. Select **localnet** in the app.
 
 ## Testing
 
@@ -99,44 +133,33 @@ npm run anchor-build
 npm run anchor-test
 ```
 
-Tests live in `anchor/programs/vault/src/tests.rs` (LiteSVM).
+`anchor/programs/vault/src/tests.rs` (LiteSVM).
 
-## Regenerating the client
-
-After IDL / program changes:
+## Regenerate client after IDL changes
 
 ```bash
-npm run setup   # or: npm run anchor-build && npm run codama:js
+npm run setup
 ```
+
+---
 
 ## Internal docs (`docs/internal/`)
 
-That folder is **listed in `.gitignore`** — it is **not** part of a normal GitHub clone. Locally you may still have notes such as:
+Not pushed to GitHub (`.gitignore`). Local reference only:
 
-| File | Contents (summary) |
-| ---- | -------------------- |
-| `idea-mvp.md` | Original product concept (YieldLink narrative, judge flow, JitoSOL + Pyth story). |
-| `roadmap-mvp.md` | Phased checklist (many items are already reflected in the current codebase). |
-| `sdk-pyth.md` | Hermes-only UI vs future on-chain Pull Oracle; env vars; feed pointers → see `app/lib/pyth/`. |
-| `hackathon.md` | Track notes (e.g. qualification: unique Rust program on devnet, README with program address, public repo, demo video + live link). |
-| `primer-deploy.md` | Operator scratch (deploy log). **Do not** paste keypair material into the public README. |
-
-For anything judges or open contributors must read, prefer a **public** doc path (e.g. `docs/public/`) without secrets.
-
-## If something is missing for a full hackathon submission
-
-Add these yourself when you have them (they are **not** in the internal notes as stable values):
-
-- **Live demo URL** (e.g. Vercel) and **demo video** link (often required, usually under 3 minutes).
-- **Explicit feed IDs** in the README if you want judges to verify Hermes mappings without opening `constants.ts`.
-- **Team / repo** links and any **sponsor-specific** checklist beyond the generic Solana track bullets.
+| File | Contents |
+| --- | --- |
+| [`idea-mvp.md`](./docs/internal/idea-mvp.md) | Product concept (EverYield). |
+| [`roadmap-mvp.md`](./docs/internal/roadmap-mvp.md) | Phased checklist. |
+| [`sdk-pyth.md`](./docs/internal/sdk-pyth.md) | Hermes UI vs on-chain Oracle. |
+| Other | Hackathon notes, deploy log — no secrets in public README. |
 
 ---
 
 ## Learn more
 
-- [Solana Docs](https://solana.com/docs)
-- [Anchor Docs](https://www.anchor-lang.com/docs/introduction)
-- [Pyth Network Docs](https://docs.pyth.network/)
-- [@solana/kit](https://github.com/anza-xyz/kit)
+- [Solana Docs](https://solana.com/docs)  
+- [Anchor Docs](https://www.anchor-lang.com/docs/introduction)  
+- [Pyth Docs](https://docs.pyth.network/)  
+- [@solana/kit](https://github.com/anza-xyz/kit)  
 - [Codama](https://github.com/codama-idl/codama)
