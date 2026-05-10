@@ -13,23 +13,22 @@ import {
   ArrowDownCircle,
   ArrowUpCircle,
   ChevronDown,
+  Copy,
   HelpCircle,
   Info,
-  Zap,
 } from "lucide-react";
 import { useWallet } from "../lib/wallet/context";
 import { useSendTransaction } from "../lib/hooks/use-send-transaction";
 import { useBalance } from "../lib/hooks/use-balance";
 import { usePythJitosolQuote } from "../lib/hooks/use-pyth-jitosol-quote";
 import { useSimulatedJitoYield } from "../lib/hooks/use-simulated-jito-yield";
-import { useLifetimeSolEarned } from "../lib/hooks/use-lifetime-sol-earned";
 import {
   lamportsFromSol,
   lamportsFromSolFloor,
   lamportsToSolString,
 } from "../lib/lamports";
 import { usdToSol } from "../lib/pyth/value-send";
-import { address, type Address, type Lamports } from "@solana/kit";
+import { address, lamports as sol, type Address, type Lamports } from "@solana/kit";
 import { toast } from "sonner";
 import {
   getDepositInstruction,
@@ -39,6 +38,8 @@ import {
   getSendToInstruction,
 } from "../generated/vault";
 import { parseTransactionError } from "../lib/errors";
+import { ellipsify } from "../lib/explorer";
+import { useSolanaClient } from "../lib/solana-client-context";
 import { useCluster } from "./cluster-context";
 
 const SOLANA_ACCENT = "#14F195";
@@ -50,6 +51,15 @@ function formatUsd(n: number): string {
     currency: "USD",
     maximumFractionDigits: 2,
   });
+}
+
+/** Hero fiat line: ≈ $X,XXX.XX (no duplicate “USD” after symbol). */
+function formatUsdApproxHero(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  return `$${n.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 }
 
 function formatEur(n: number): string {
@@ -73,17 +83,6 @@ function formatMxn(n: number): string {
 function formatJitosolLike(n: number): string {
   if (!Number.isFinite(n)) return "—";
   return n.toLocaleString(undefined, { maximumFractionDigits: 6 });
-}
-
-function formatDurationSec(sec: number): string {
-  if (!Number.isFinite(sec)) return "—";
-  if (sec < 60) return `${Math.floor(sec)}s`;
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
-  if (sec < 3600) return `${m}m ${s}s`;
-  const h = Math.floor(sec / 3600);
-  const m2 = Math.floor((sec % 3600) / 60);
-  return `${h}h ${m2}m`;
 }
 
 function formatExecutedSol(lp: Lamports): string {
@@ -248,7 +247,8 @@ function PremiumShell({ children }: { children: ReactNode }) {
 export function VaultCard() {
   const { wallet, signer, status } = useWallet();
   const { send, isSending } = useSendTransaction();
-  const { getExplorerUrl } = useCluster();
+  const { cluster, getExplorerUrl } = useCluster();
+  const solanaClient = useSolanaClient();
 
   const pythQuote = usePythJitosolQuote();
 
@@ -264,9 +264,19 @@ export function VaultCard() {
   const [vaultHubTab, setVaultHubTab] = useState<"deposit" | "withdraw">(
     "deposit"
   );
+  const [vaultPanelOpen, setVaultPanelOpen] = useState(false);
+  const [walletCopied, setWalletCopied] = useState(false);
+
+  const selectVaultHubTab = useCallback((t: "deposit" | "withdraw") => {
+    if (vaultHubTab === t) {
+      setVaultPanelOpen((open) => !open);
+    } else {
+      setVaultHubTab(t);
+      setVaultPanelOpen(true);
+    }
+  }, [vaultHubTab]);
 
   const walletAddress = wallet?.account.address;
-  const walletKey = walletAddress ? String(walletAddress) : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -313,14 +323,6 @@ export function VaultCard() {
     simulated != null ? simulated.dynamicSol : hasVaultFunds ? solInVault : 0;
 
   const animatedSol = useAnimatedSol(dynamicSolTarget, Boolean(simulated));
-
-  const sessionYieldSol = simulated?.yieldSol ?? null;
-
-  const lifetimeEarnedSol = useLifetimeSolEarned(
-    walletKey,
-    sessionYieldSol,
-    hasVaultFunds
-  );
 
   const parts = splitFixed8(animatedSol);
 
@@ -675,6 +677,70 @@ export function VaultCard() {
     vaultLamports,
   ]);
 
+  const handleCopyVaultAddress = useCallback(() => {
+    if (!vaultAddress) return;
+    const s = String(vaultAddress);
+    void navigator.clipboard.writeText(s).then(
+      () => {
+        toast.success("Vault address copied");
+      },
+      () => {
+        toast.error("Could not copy");
+      }
+    );
+  }, [vaultAddress]);
+
+  const handleCopyWalletAddress = useCallback(async () => {
+    if (!walletAddress) return;
+    await navigator.clipboard.writeText(String(walletAddress));
+    setWalletCopied(true);
+    setTimeout(() => setWalletCopied(false), 2000);
+  }, [walletAddress]);
+
+  const handleWalletAirdrop = useCallback(async () => {
+    if (!walletAddress) return;
+    try {
+      toast.info("Requesting airdrop...");
+      const sig = await solanaClient.airdrop(walletAddress, sol(1_000_000_000n));
+      toast.success("Airdrop received!", {
+        description: sig ? (
+          <a
+            href={getExplorerUrl(`/tx/${sig}`)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline"
+          >
+            View transaction
+          </a>
+        ) : undefined,
+      });
+    } catch (err) {
+      console.error("Airdrop failed:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      const isRateLimited =
+        msg.includes("429") || msg.includes("Internal JSON-RPC error");
+      toast.error(
+        isRateLimited
+          ? "Devnet faucet rate-limited. Use the web faucet instead."
+          : "Airdrop failed. Try again later.",
+        isRateLimited
+          ? {
+              description: (
+                <a
+                  href="https://faucet.solana.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline"
+                >
+                  Open faucet.solana.com
+                </a>
+              ),
+            }
+          : undefined
+      );
+    }
+  }, [walletAddress, solanaClient, getExplorerUrl]);
+
   if (status !== "connected") {
     return (
       <PremiumShell>
@@ -690,173 +756,209 @@ export function VaultCard() {
 
   return (
     <PremiumShell>
-      <section className="w-full space-y-6 p-6 sm:p-8">
-        {/* Hero — SOL-first, technically honest */}
-        <div className="space-y-5">
-          <div className="flex items-start justify-between gap-3">
-            <h2 className="text-lg font-medium tracking-tight text-zinc-100 sm:text-xl">
-              YieldLink
-            </h2>
+      <section className="w-full space-y-2.5 p-4 sm:p-5">
+        {/* Header: title + LIVE PYTH top-right */}
+        <div className="flex w-full min-w-0 items-start justify-between gap-4 border-b border-white/10 pb-3">
+          <div className="min-w-0">
+            <h1 className="text-5xl font-bold leading-[0.95] tracking-tight text-zinc-50 sm:text-6xl">
+              EverYield
+            </h1>
+            <p className="mt-1 text-xl text-emerald-400/80">
+              Grow perpetually, spend instantly.
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2 self-start pt-1">
             <button
               type="button"
-              className="group relative shrink-0 rounded-full p-1.5 text-zinc-500 outline-none transition hover:text-zinc-300 focus-visible:ring-2 focus-visible:ring-emerald-500/40"
-              aria-label="Technical details"
+              className="group relative shrink-0 rounded-full p-1 text-zinc-400 outline-none transition hover:text-zinc-200 focus-visible:ring-2 focus-visible:ring-emerald-500/40"
+              aria-label="Product and technical details"
             >
-              <HelpCircle className="h-5 w-5" strokeWidth={1.75} />
+              <HelpCircle
+                className="h-4 w-4 sm:h-[1.15rem] sm:w-[1.15rem]"
+                strokeWidth={1.75}
+              />
               <span
                 role="tooltip"
-                className="pointer-events-none invisible absolute right-0 top-full z-50 mt-2 w-[min(22rem,calc(100vw-2.5rem))] rounded-xl border border-white/12 bg-neutral-950/95 px-3.5 py-2.5 text-left text-[11px] font-normal leading-relaxed text-zinc-300 shadow-xl backdrop-blur-md opacity-0 transition-[opacity,visibility] duration-150 group-hover:visible group-hover:opacity-100 group-focus-visible:visible group-focus-visible:opacity-100"
+                className="pointer-events-none invisible absolute right-0 top-full z-50 mt-1.5 w-[min(22rem,calc(100vw-2.5rem))] rounded-xl border border-white/12 bg-neutral-950/95 px-3.5 py-3.5 text-left shadow-xl backdrop-blur-md opacity-0 transition-[opacity,visibility] duration-150 group-hover:visible group-hover:opacity-100 group-focus-visible:visible group-focus-visible:opacity-100"
               >
-                Technical Stack: PDA-based Vault (Devnet) | Price Discovery via
-                Pyth Network Hermes | Simulated Value Accrual based on
-                JitoSOL/SOL historical ratio. This MVP demonstrates live value
-                growth without locking capital.
+                <div className="space-y-2 border-b border-white/10 pb-2.5 text-[11px] leading-snug text-zinc-400">
+                  <p>
+                    <span className="font-semibold text-zinc-200">
+                      Strategy:
+                    </span>{" "}
+                    Assets are optimized in JitoSOL for real-time value
+                    accrual.
+                  </p>
+                  <p>
+                    <span className="font-semibold text-zinc-200">
+                      Oracle:
+                    </span>{" "}
+                    Prices synced via Pyth Network Hermes (Mainnet).
+                  </p>
+                  <p>
+                    <span className="font-semibold text-zinc-200">
+                      Safety:
+                    </span>{" "}
+                    Funds are held in a non-custodial PDA Vault (Devnet).
+                  </p>
+                  <p>
+                    <span className="font-semibold text-zinc-200">
+                      Transparency:
+                    </span>{" "}
+                    The displayed SOL balance grows as the JitoSOL/SOL ratio
+                    increases.
+                  </p>
+                </div>
+                <div className="mt-2.5 space-y-2 text-[10px] leading-relaxed text-zinc-500">
+                  <p>
+                    <span className="font-semibold text-zinc-400">
+                      Balance and display
+                    </span>
+                    <br />
+                    Position held in JitoSOL — main number is SOL for
+                    readability. On-chain balance is native SOL lamports in the
+                    vault PDA.
+                  </p>
+                  {pythQuote.data && (
+                    <p className="font-mono text-[10px] text-zinc-500">
+                      <span className="font-sans font-semibold text-zinc-400">
+                        Pyth spot ratio:
+                      </span>{" "}
+                      {formatJitosolLike(pythQuote.data.jitosolPerSol)} JitoSOL /
+                      1 SOL
+                    </p>
+                  )}
+                </div>
               </span>
             </button>
-          </div>
-
-          <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
-            <motion.div
-              className="font-mono tabular-nums text-5xl font-semibold leading-none tracking-tight text-zinc-50 sm:text-6xl md:text-7xl"
-              layout
-            >
-              <span className="select-none">{parts.intPart}</span>
-              <span className="text-zinc-600">.</span>
-              <span className="text-zinc-300">{parts.fracA}</span>
-              <motion.span
-                className="inline-block min-w-[4.5ch] text-zinc-200"
-                key={parts.fracB}
-                initial={{ y: 3, opacity: 0.5 }}
-                animate={{ y: 0, opacity: 1 }}
-                transition={{ type: "spring", stiffness: 500, damping: 35 }}
-              >
-                {parts.fracB}
-              </motion.span>
-              <span className="ml-1.5 text-2xl font-medium text-zinc-500 sm:text-3xl md:text-4xl">
-                SOL
-              </span>
-            </motion.div>
-            {(vaultLamports ?? 0n) > 0n && pythQuote.data && (
-              <span className="shrink-0 self-start rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-400/95 sm:self-center">
-                Yield Accrual Active
-              </span>
-            )}
-          </div>
-
-          <p className="text-xs text-zinc-500">
-            Position held in JitoSOL — displayed in SOL for readability. Vault
-            balance is native SOL on-chain.
-          </p>
-          <p className="text-sm text-neutral-500">
-            {heroUsdApprox != null
-              ? `≈ ${formatUsd(heroUsdApprox)} USD`
-              : pythQuote.isLoading
-                ? "USD estimate loading…"
-                : "—"}
-          </p>
-          <p className="text-[11px] text-zinc-600">
-            Rates powered by Pyth Network
             {pythQuote.data && (
-              <>
-                {" "}
-                ·{" "}
-                <span className="font-mono text-zinc-500">
-                  {formatJitosolLike(pythQuote.data.jitosolPerSol)} JitoSOL/SOL
-                </span>
-              </>
+              <span className="inline-flex items-center gap-1.5 text-[9px] font-medium uppercase tracking-wide text-emerald-400/90">
+                <span
+                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400/90 shadow-[0_0_6px_rgba(52,211,153,0.45)] animate-pulse"
+                  aria-hidden
+                />
+                LIVE PYTH FEED
+              </span>
             )}
-          </p>
-
-          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-            <motion.div
-              layout
-              className="rounded-xl border border-white/10 bg-black/25 p-3 shadow-inner shadow-black/30"
-            >
-              <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-zinc-500">
-                <Zap className="h-3 w-3 text-emerald-400/80" />
-                Value Accrued
-              </div>
-              <p className="font-mono text-xl font-semibold tabular-nums text-emerald-400">
-                +{(simulated?.yieldSol ?? 0).toFixed(8)}{" "}
-                <span className="text-sm font-normal text-zinc-500">SOL</span>
-              </p>
-              <p className="mt-1.5 text-[10px] text-zinc-500">
-                Session · ~8% APR reference ·{" "}
-                <span className="font-mono text-zinc-400">
-                  {simulated
-                    ? formatDurationSec(simulated.elapsedSec)
-                    : hasVaultFunds
-                      ? "—"
-                      : "0s"}
-                </span>
-              </p>
-            </motion.div>
-
-            <motion.div
-              layout
-              className="rounded-xl border border-white/10 bg-black/20 p-3 shadow-inner shadow-black/30"
-            >
-              <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-zinc-500">
-                Lifetime accrual
-              </div>
-              <motion.p
-                className="font-mono text-xl font-semibold tabular-nums text-emerald-400"
-                key={lifetimeEarnedSol.toFixed(12)}
-                initial={{ scale: 1.02 }}
-                animate={{ scale: 1 }}
-                transition={{ type: "spring", stiffness: 400, damping: 28 }}
-              >
-                +{lifetimeEarnedSol.toFixed(8)}{" "}
-                <span className="text-sm font-normal text-zinc-500">SOL</span>
-              </motion.p>
-              <p className="mt-1.5 text-[10px] text-zinc-500">
-                Cumulative in this browser (does not decrease on withdraw).
-              </p>
-            </motion.div>
           </div>
-
-          {vaultAddress && (vaultLamports ?? 0n) > 0n && (
-            <p className="flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-600">
-              <span>Vault PDA</span>
-              <a
-                href={getExplorerUrl(`/address/${vaultAddress}`)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="truncate font-mono underline decoration-zinc-700 underline-offset-2 hover:text-zinc-400"
-              >
-                {vaultAddress}
-              </a>
-            </p>
-          )}
-
-          {(pythQuote.isLoading || pythQuote.error) && (
-            <div className="border-t border-white/10 pt-3 text-[11px] text-zinc-500">
-              {pythQuote.isLoading && !pythQuote.data && (
-                <p>Loading Hermes price feeds…</p>
-              )}
-              {pythQuote.error && (
-                <p className="text-red-400/90">
-                  {pythQuote.error instanceof Error
-                    ? pythQuote.error.message
-                    : String(pythQuote.error)}
-                </p>
-              )}
-            </div>
-          )}
         </div>
 
-        {/* Actions */}
-        <div className="space-y-4 border-t border-white/10 pt-6">
-          <div className="rounded-2xl border border-white/10 bg-neutral-900/50 p-4 backdrop-blur-md">
-            <p className="mb-3 text-sm font-medium tracking-tight text-zinc-300">
-              Vault Management Hub
-            </p>
+        {/* Long copy — band between header and control center */}
+        <div className="border-b border-white/10 bg-white/[0.02] py-3">
+          <p className="w-full text-sm leading-relaxed text-zinc-400 sm:text-[15px]">
+            The first high-yield vault on Solana that stays liquid for your
+            daily spending. Powered by Jito & Pyth Network.
+          </p>
+        </div>
 
-            <div className="relative mb-4 flex gap-1 rounded-xl border border-white/10 bg-black/30 p-1">
+        {/* Unified control: Wallet | Vault | Actions (baseline-aligned) */}
+        <div className="space-y-2 border-b border-white/10 pb-4 pt-4">
+          <div className="flex w-full min-w-0 flex-row flex-wrap items-end justify-between gap-4">
+            <div className="min-w-0 w-full max-w-[280px] shrink-0 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 sm:w-[min(280px,34%)] sm:max-w-none">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-medium text-zinc-400">
+                  Wallet balance
+                </span>
+                {cluster !== "mainnet" && (
+                  <button
+                    type="button"
+                    onClick={handleWalletAirdrop}
+                    className="shrink-0 cursor-pointer rounded-lg border border-white/10 px-2 py-0.5 text-[10px] font-medium text-zinc-300 transition hover:bg-white/5"
+                  >
+                    Airdrop
+                  </button>
+                )}
+              </div>
+              {walletAddress && (
+                <button
+                  type="button"
+                  onClick={handleCopyWalletAddress}
+                  className="mt-1 flex max-w-full cursor-pointer items-center gap-1.5 truncate font-mono text-[10px] text-zinc-400 transition hover:text-zinc-200 sm:text-[11px]"
+                >
+                  {ellipsify(walletAddress, 4)}
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="h-3 w-3 shrink-0"
+                  >
+                    {walletCopied ? (
+                      <path d="M20 6 9 17l-5-5" />
+                    ) : (
+                      <>
+                        <rect
+                          width="14"
+                          height="14"
+                          x="8"
+                          y="8"
+                          rx="2"
+                          ry="2"
+                        />
+                        <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                      </>
+                    )}
+                  </svg>
+                </button>
+              )}
+              <p className="mt-2 font-mono text-2xl font-bold tabular-nums tracking-tight text-zinc-50 sm:text-3xl">
+                {walletLamports != null
+                  ? lamportsToSolString(walletLamports)
+                  : "\u2014"}
+                <span className="ml-1 text-sm font-normal text-zinc-500">
+                  SOL
+                </span>
+              </p>
+            </div>
+
+            <div className="flex min-w-0 flex-1 flex-col items-center justify-end px-1 text-center sm:px-3">
+              <span className="text-xs font-medium text-zinc-500">
+                Vault balance
+              </span>
+              <motion.div
+                className="mt-1 font-mono tabular-nums text-3xl font-semibold leading-none tracking-tight text-zinc-50 sm:text-4xl"
+                layout
+              >
+                <span className="select-none">{parts.intPart}</span>
+                <span className="text-zinc-600">.</span>
+                <span className="text-zinc-300">{parts.fracA}</span>
+                <motion.span
+                  className="inline-block min-w-[4.5ch] text-zinc-200"
+                  key={parts.fracB}
+                  initial={{ y: 3, opacity: 0.5 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  transition={{
+                    type: "spring",
+                    stiffness: 500,
+                    damping: 35,
+                  }}
+                >
+                  {parts.fracB}
+                </motion.span>
+                <span className="ml-1 text-sm font-medium text-zinc-500">
+                  SOL
+                </span>
+              </motion.div>
+              <p className="mt-0.5 text-sm leading-tight text-zinc-300">
+                Balance held in JitoSOL
+              </p>
+              <p className="text-xs font-medium tabular-nums leading-tight text-zinc-400">
+                {heroUsdApprox != null
+                  ? `≈ ${formatUsdApproxHero(heroUsdApprox)}`
+                  : pythQuote.isLoading
+                    ? "…"
+                    : "—"}
+              </p>
+            </div>
+
+            <div className="relative inline-flex shrink-0 rounded-md border border-white/12 bg-black/45 p-px self-end">
               <button
                 type="button"
-                onClick={() => setVaultHubTab("deposit")}
-                className={`relative flex flex-1 items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-medium transition ${
+                onClick={() => selectVaultHubTab("deposit")}
+                className={`relative min-w-[4rem] rounded-[5px] px-1.5 py-0.5 text-[10px] font-semibold transition sm:min-w-[4.25rem] sm:px-2 sm:py-1 sm:text-[11px] ${
                   vaultHubTab === "deposit"
                     ? "text-zinc-50"
                     : "text-zinc-500 hover:text-zinc-300"
@@ -865,7 +967,7 @@ export function VaultCard() {
                 {vaultHubTab === "deposit" && (
                   <motion.div
                     layoutId="vaultHubTabIndicator"
-                    className="absolute inset-0 rounded-lg bg-[#14F195]/18 ring-1 ring-[#14F195]/35"
+                    className="absolute inset-0 rounded-[5px] bg-[#14F195]/22 ring-1 ring-[#14F195]/35"
                     transition={{
                       type: "spring",
                       stiffness: 440,
@@ -873,15 +975,15 @@ export function VaultCard() {
                     }}
                   />
                 )}
-                <span className="relative z-10 inline-flex items-center gap-2">
-                  <ArrowDownCircle className="h-4 w-4 shrink-0 text-[#14F195]" />
+                <span className="relative z-10 inline-flex items-center justify-center gap-0.5">
+                  <ArrowDownCircle className="h-2.5 w-2.5 shrink-0 text-[#14F195] sm:h-3 sm:w-3" />
                   Deposit
                 </span>
               </button>
               <button
                 type="button"
-                onClick={() => setVaultHubTab("withdraw")}
-                className={`relative flex flex-1 items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-medium transition ${
+                onClick={() => selectVaultHubTab("withdraw")}
+                className={`relative min-w-[4.25rem] rounded-[5px] px-1.5 py-0.5 text-[10px] font-semibold transition sm:min-w-[4.5rem] sm:px-2 sm:py-1 sm:text-[11px] ${
                   vaultHubTab === "withdraw"
                     ? "text-zinc-50"
                     : "text-zinc-500 hover:text-zinc-300"
@@ -890,7 +992,7 @@ export function VaultCard() {
                 {vaultHubTab === "withdraw" && (
                   <motion.div
                     layoutId="vaultHubTabIndicator"
-                    className="absolute inset-0 rounded-lg bg-blue-500/20 ring-1 ring-blue-400/35"
+                    className="absolute inset-0 rounded-[5px] bg-blue-500/25 ring-1 ring-blue-400/35"
                     transition={{
                       type: "spring",
                       stiffness: 440,
@@ -898,94 +1000,132 @@ export function VaultCard() {
                     }}
                   />
                 )}
-                <span className="relative z-10 inline-flex items-center gap-2">
-                  <ArrowUpCircle className="h-4 w-4 shrink-0 text-sky-400" />
+                <span className="relative z-10 inline-flex items-center justify-center gap-0.5">
+                  <ArrowUpCircle className="h-2.5 w-2.5 shrink-0 text-sky-400 sm:h-3 sm:w-3" />
                   Withdraw
                 </span>
               </button>
             </div>
-
-            <AnimatePresence mode="wait">
-              {vaultHubTab === "deposit" ? (
-                <motion.div
-                  key="hub-deposit"
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -8 }}
-                  transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-                  className="space-y-3"
-                >
-                  <div className="flex flex-wrap gap-3">
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      placeholder="Amount (SOL)"
-                      value={amount}
-                      onChange={(e) => setAmount(e.target.value)}
-                      disabled={isSending}
-                      className="min-w-[10rem] flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-[#14F195]/40 focus:ring-1 focus:ring-[#14F195]/30 disabled:pointer-events-none disabled:opacity-50"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleDeposit}
-                      disabled={isSending || !amount || parseFloat(amount) <= 0}
-                      className="rounded-xl border border-white/15 bg-transparent px-6 py-2.5 text-sm font-medium text-zinc-100 transition hover:border-[#14F195]/35 hover:bg-[#14F195]/5 disabled:pointer-events-none disabled:opacity-45"
-                    >
-                      {isSending ? "Confirming…" : "Deposit"}
-                    </button>
-                  </div>
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="hub-withdraw"
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -8 }}
-                  transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-                  className="space-y-4"
-                >
-                  <div className="flex flex-wrap gap-3">
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.001"
-                      placeholder="Amount to your wallet (SOL)"
-                      value={partialAmount}
-                      onChange={(e) => setPartialAmount(e.target.value)}
-                      disabled={isSending}
-                      className="min-w-[10rem] flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-white/25 focus:ring-1 focus:ring-white/10 disabled:pointer-events-none disabled:opacity-50"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleWithdrawPartial}
-                      disabled={
-                        isSending ||
-                        !partialAmount ||
-                        parseFloat(partialAmount) <= 0 ||
-                        !vaultLamports
-                      }
-                      className="rounded-xl border border-white/15 bg-transparent px-5 py-2.5 text-sm font-medium text-zinc-100 transition hover:border-white/25 hover:bg-white/[0.04] disabled:pointer-events-none disabled:opacity-45"
-                    >
-                      {isSending ? "Confirming…" : "Withdraw"}
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleWithdraw}
-                    disabled={isSending || !vaultLamports}
-                    className="w-full rounded-xl border border-white/20 bg-transparent py-2.5 text-sm font-medium text-zinc-400 transition hover:border-white/30 hover:bg-white/[0.04] hover:text-zinc-200 disabled:pointer-events-none disabled:opacity-45"
-                  >
-                    {isSending ? "Confirming…" : "Withdraw All & Close Vault"}
-                  </button>
-                </motion.div>
-              )}
-            </AnimatePresence>
           </div>
 
-          <div className="space-y-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-            <div className="flex items-center gap-2">
-              <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-zinc-500">
+          <AnimatePresence initial={false}>
+            {vaultPanelOpen && (
+              <motion.div
+                key="vault-action-panel"
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                className="ml-auto w-full max-w-[280px] overflow-hidden pt-1"
+              >
+                <div className="w-full max-w-[280px] rounded-lg border border-white/10 bg-neutral-900/55 px-3 py-2 backdrop-blur-sm">
+                      <AnimatePresence mode="wait">
+                        {vaultHubTab === "deposit" ? (
+                          <motion.div
+                            key="hub-deposit"
+                            initial={{ opacity: 0, y: 6 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -4 }}
+                            transition={{ duration: 0.18 }}
+                            className="flex flex-col gap-2"
+                          >
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              placeholder="Amount (SOL)"
+                              value={amount}
+                              onChange={(e) => setAmount(e.target.value)}
+                              disabled={isSending}
+                              className="w-full max-w-[250px] rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-300 focus:border-[#14F195]/40 focus:ring-1 focus:ring-[#14F195]/25 disabled:pointer-events-none disabled:opacity-50"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleDeposit}
+                              disabled={
+                                isSending ||
+                                !amount ||
+                                parseFloat(amount) <= 0
+                              }
+                              className="self-start rounded-lg border border-white/15 bg-transparent px-4 py-2 text-xs font-semibold text-zinc-100 transition hover:border-[#14F195]/40 hover:bg-[#14F195]/8 disabled:pointer-events-none disabled:opacity-45"
+                            >
+                              {isSending ? "…" : "Deposit"}
+                            </button>
+                          </motion.div>
+                        ) : (
+                          <motion.div
+                            key="hub-withdraw"
+                            initial={{ opacity: 0, y: 6 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -4 }}
+                            transition={{ duration: 0.18 }}
+                            className="space-y-2"
+                          >
+                            <div className="flex flex-col gap-2">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.001"
+                                placeholder="To wallet (SOL)"
+                                value={partialAmount}
+                                onChange={(e) =>
+                                  setPartialAmount(e.target.value)
+                                }
+                                disabled={isSending}
+                                className="w-full max-w-[250px] rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-300 focus:border-white/25 focus:ring-1 focus:ring-white/10 disabled:pointer-events-none disabled:opacity-50"
+                              />
+                              <button
+                                type="button"
+                                onClick={handleWithdrawPartial}
+                                disabled={
+                                  isSending ||
+                                  !partialAmount ||
+                                  parseFloat(partialAmount) <= 0 ||
+                                  !vaultLamports
+                                }
+                                className="self-start rounded-lg border border-white/15 bg-transparent px-4 py-2 text-xs font-semibold text-zinc-100 transition hover:border-white/30 hover:bg-white/[0.05] disabled:pointer-events-none disabled:opacity-45"
+                              >
+                                {isSending ? "…" : "Partial"}
+                              </button>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={handleWithdraw}
+                              disabled={isSending || !vaultLamports}
+                              className="w-full max-w-[250px] rounded-lg border border-white/18 bg-transparent py-1.5 text-[11px] font-medium text-zinc-400 transition hover:border-white/28 hover:bg-white/[0.04] hover:text-zinc-200 disabled:pointer-events-none disabled:opacity-45"
+                            >
+                              {isSending
+                                ? "…"
+                                : "Withdraw all & close vault"}
+                            </button>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {(pythQuote.isLoading || pythQuote.error) && (
+          <div className="border-t border-white/10 pt-2 text-[10px] text-zinc-500">
+            {pythQuote.isLoading && !pythQuote.data && (
+              <p>Loading Hermes price feeds…</p>
+            )}
+            {pythQuote.error && (
+              <p className="text-red-400/90">
+                {pythQuote.error instanceof Error
+                  ? pythQuote.error.message
+                  : String(pythQuote.error)}
+              </p>
+            )}
+          </div>
+        )}
+
+        <div className="space-y-4 border-t border-white/10 pt-4">
+          <div className="space-y-5 rounded-2xl border border-white/15 bg-white/[0.045] p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.04)_inset] sm:p-6">
+            <div className="flex items-center gap-2.5">
+              <p className="text-base font-semibold tracking-tight text-zinc-100 sm:text-lg">
                 Smart send
               </p>
               <button
@@ -1012,7 +1152,7 @@ export function VaultCard() {
               value={sendRecipient}
               onChange={(e) => setSendRecipient(e.target.value)}
               disabled={isSending}
-              className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 font-mono text-xs text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-white/25 focus:ring-1 focus:ring-violet-500/25 disabled:pointer-events-none disabled:opacity-50"
+              className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3.5 font-mono text-sm text-zinc-300 outline-none transition placeholder:text-zinc-300 focus:border-white/25 focus:ring-1 focus:ring-violet-500/25 disabled:pointer-events-none disabled:opacity-50"
             />
 
             <motion.div
@@ -1076,7 +1216,7 @@ export function VaultCard() {
                   value={sendAmount}
                   onChange={(e) => setSendAmount(e.target.value)}
                   disabled={isSending}
-                  className="w-[7.25rem] border-0 border-b border-zinc-600 bg-transparent pb-px text-lg font-semibold tabular-nums text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-[#14F195]/70 disabled:opacity-50 sm:w-36 md:w-44"
+                  className="w-[7.25rem] border-0 border-b border-zinc-600 bg-transparent pb-px text-lg font-semibold tabular-nums text-zinc-100 outline-none transition placeholder:text-zinc-300 focus:border-[#14F195]/70 disabled:opacity-50 sm:w-36 md:w-44"
                 />
                 <span className="pb-px text-zinc-500">as</span>
                 <label className="relative inline-flex items-center pb-px">
@@ -1088,7 +1228,7 @@ export function VaultCard() {
                       setSendAmount("");
                     }}
                     disabled={isSending}
-                    className="h-10 min-w-[13.5rem] max-w-[min(100vw-2rem,20rem)] cursor-pointer appearance-none rounded-xl border border-white/15 bg-black/35 py-2 pl-3 pr-9 text-sm font-medium text-zinc-100 outline-none transition hover:bg-black/45 focus-visible:ring-1 focus-visible:ring-violet-500/40 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="min-h-12 min-w-[13.5rem] max-w-[min(100vw-2rem,22rem)] cursor-pointer appearance-none rounded-xl border border-white/15 bg-black/35 py-3 pl-3 pr-10 text-sm font-medium text-zinc-100 outline-none transition hover:bg-black/45 focus-visible:ring-1 focus-visible:ring-violet-500/40 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {smartSendDenomOptions.map(([value, label]) => (
                       <option key={value} value={value}>
@@ -1097,7 +1237,7 @@ export function VaultCard() {
                     ))}
                   </select>
                   <ChevronDown
-                    className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500"
+                    className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500"
                     aria-hidden
                   />
                 </label>
@@ -1267,6 +1407,31 @@ export function VaultCard() {
             </div>
           </div>
         </div>
+
+        {vaultAddress && (vaultLamports ?? 0n) > 0n && (
+          <div className="flex flex-col items-center gap-1.5 px-2 pb-2 pt-4 text-center text-[10px] text-zinc-400">
+            <span className="font-medium">Vault PDA</span>
+            <div className="flex max-w-full flex-wrap items-center justify-center gap-1.5">
+              <a
+                href={getExplorerUrl(`/address/${vaultAddress}`)}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={`Open in Solana Explorer (${cluster})`}
+                className="max-w-full break-all font-mono text-[10px] text-zinc-400 underline decoration-zinc-600 underline-offset-2 hover:text-zinc-300"
+              >
+                {vaultAddress}
+              </a>
+              <button
+                type="button"
+                onClick={handleCopyVaultAddress}
+                className="shrink-0 rounded p-0.5 text-zinc-400 transition hover:bg-white/5 hover:text-zinc-300"
+                aria-label="Copy vault address"
+              >
+                <Copy className="h-3 w-3" strokeWidth={2} />
+              </button>
+            </div>
+          </div>
+        )}
       </section>
     </PremiumShell>
   );
