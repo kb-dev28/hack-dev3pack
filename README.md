@@ -1,7 +1,10 @@
 # EverYield (`hack-dev3pack`)
 
-**Project name:** **EverYield**  
-**Description:** Non-custodial Solana **PDA vault** (native SOL) with **Smart Send**: pay a recipient using an amount in **crypto or fiat**, converted off-chain with **Pyth Hermes** (mainnet spot prices). Frontend: Next.js + `@solana/kit` + wallet-standard. On-chain: **Anchor** (Rust).
+**Project name:** **EverYield**
+
+**One-line pitch:** *Continuous-yield vault: auto-converts value for exact crypto/fiat payments while your capital never stops growing.*
+
+**What it is:** EverYield is a non-custodial Solana **PDA vault** (native SOL) framed around **JitoSOL-style yield** in the UI: deposits stay productive in narrative and pricing while you still move funds when you need to. **Smart Send** lets you specify an amount in **crypto or fiat**, converts it off-chain with **Pyth Hermes** (mainnet spot feeds), and settles in **one signed transaction** to your recipient via the vault program. Frontend: Next.js + `@solana/kit` + wallet-standard. On-chain: **Anchor** (Rust).
 
 ---
 
@@ -12,6 +15,7 @@
 | **Live demo (Vercel)** | [https://hack-dev3pack.vercel.app/](https://hack-dev3pack.vercel.app/) |
 | **Demo video** | *Add your public video URL here (keep under ~3 minutes per track rules).* |
 | **Public GitHub repo** | [github.com/kb-dev28/hack-dev3pack](https://github.com/kb-dev28/hack-dev3pack) |
+| **Team / X** | [@karm_bit](https://x.com/karm_bit) |
 
 ### For judges (no install)
 
@@ -57,14 +61,14 @@ If you deploy a **new** program: `anchor keys sync` → rebuild → deploy → `
 
 ---
 
-## Solana track checklist (quick reference)
+## Submission checklist (self-audit)
 
-- [x] **Project name + short description** — top of this README.  
-- [x] **Unique Solana program (Rust)** — Anchor vault in `anchor/programs/vault/`.  
-- [x] **Contract address on devnet** — table above.  
-- [x] **Public GitHub + README + setup** — clone + `npm install` + `npm run dev`; `npm run setup` when changing on-chain code.  
-- [ ] **Demo video** — add URL in the table when ready.  
-- **Bonus:** `@solana/kit`, wallet-standard, Codama client, Anchor + LiteSVM tests.
+- [x] Name + description  
+- [x] Rust on-chain program on **devnet** + address in README  
+- [x] Public repo + setup instructions  
+- [x] Live demo URL  
+- [ ] Demo video URL (≤ ~3 min) — add when ready  
+- [x] Solana SDK usage — `@solana/kit`, wallet-standard, Codama client, Anchor + LiteSVM tests  
 
 ---
 
@@ -80,16 +84,6 @@ If you deploy a **new** program: `anchor keys sync` → rebuild → deploy → `
 
 Details: [`.env.example`](./.env.example). Never commit private keys or deploy keypairs.
 
----
-
-## What’s in the MVP
-
-- **Header** — EverYield, tagline, help tooltip (incl. Pyth ratio when loaded), theme, cluster, wallet.  
-- **Wallet** — balance, address + copy; devnet airdrop helper when not on mainnet.  
-- **Vault** — deposit; partial / total withdraw; JitoSOL-framed balance + simulated yield tick (`useSimulatedJitoYield`).  
-- **Smart Send** — recipient + amount (default ref **ETH** in crypto mode); Hermes conversion; optional fee; recipient highlight when amount set but address empty.  
-- **Instructions:** `deposit`, `withdraw`, `withdraw_partial`, `send_to`.  
-- **Pyth** — Hermes in the frontend only; the program does **not** read Pyth accounts (`app/lib/pyth/`, `use-pyth-jitosol-quote.ts`).
 
 ---
 
@@ -140,19 +134,6 @@ npm run anchor-test
 ```bash
 npm run setup
 ```
-
----
-
-## Internal docs (`docs/internal/`)
-
-Not pushed to GitHub (`.gitignore`). Local reference only:
-
-| File | Contents |
-| --- | --- |
-| [`idea-mvp.md`](./docs/internal/idea-mvp.md) | Product concept (EverYield). |
-| [`roadmap-mvp.md`](./docs/internal/roadmap-mvp.md) | Phased checklist. |
-| [`sdk-pyth.md`](./docs/internal/sdk-pyth.md) | Hermes UI vs on-chain Oracle. |
-| Other | Hackathon notes, deploy log — no secrets in public README. |
 
 ---
 
